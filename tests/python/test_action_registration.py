@@ -7,7 +7,6 @@ from unittest.mock import patch
 
 from esphome import automation
 from esphome import config_validation as cv
-from esphome.components import modbus, stepper  # Load built-in registrations first.
 
 
 class ActionRegistrationTest(unittest.TestCase):
@@ -18,6 +17,9 @@ class ActionRegistrationTest(unittest.TestCase):
         )
         spec = importlib.util.spec_from_file_location("servoxxd_stepper_test", source)
         module = importlib.util.module_from_spec(spec)
+        # Preload dependency actions before measuring ServoXXD registrations.
+        importlib.import_module("esphome.components.modbus")
+        importlib.import_module("esphome.components.stepper")
         with patch.object(
             automation, "register_action", wraps=automation.register_action
         ) as register:
