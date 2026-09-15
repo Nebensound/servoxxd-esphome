@@ -968,6 +968,45 @@ void test_14_homing_config_synchronization(TestStats &stats) {
   stats.check(has_speed_homing_update, "Different homing speed → SET_HOMING_PARAMETERS IS in update list");
 }
 
+void test_15_microstepping_setup_width(TestStats &stats) {
+  class RecordingTransport : public RealisticMockTransport {
+   public:
+    std::vector<Command> commands;
+
+    Result execute_command(const Command &cmd) override {
+      commands.push_back(cmd);
+      if (cmd.command_type == Commandtype::READ_ALL_CONFIG) {
+        Command response = cmd;
+        response.response.resize(38, 0);
+        response.response[4] = 16;
+        queue_response(response, 10);
+        return {true, ErrorCode::OK};
+      }
+      return RealisticMockTransport::execute_command(cmd);
+    }
+  };
+
+  ServoXxd parent;
+  parent.set_control_mode(ControlMode::SR_CLOSE);
+  parent.set_microsteps(256);
+  RecordingTransport transport;
+  StepperEngine engine(&parent, &transport);
+  setup_and_wait(transport, engine);
+
+  bool sent_subdivision = false;
+  for (const auto &command : transport.commands) {
+    if (command.command_type == Commandtype::SET_SUBDIVISION) {
+      sent_subdivision = true;
+      // Check propagation into the unchanged encoder, not hardware acceptance of 0x0100.
+      stats.check(command.payload == std::vector<uint8_t>({0x01, 0x00}),
+                  "Setup forwards 256 without narrowing to the existing uint16 encoder");
+    }
+  }
+  stats.check(sent_subdivision, "Setup sends changed subdivision");
+  stats.check(parent.get_microstepping() == 256, "Setup preserves configured subdivision 256");
+  stats.check(parent.get_effective_steps_per_revolution() == 51200.0f, "Setup preserves 51200 effective steps");
+}
+
 // ============================================================================
 // Main Test Runner
 // ============================================================================
@@ -1020,6 +1059,9 @@ int main() {
 
   test_14_homing_config_synchronization(stats);
   stats.print_summary("TEST 14");
+
+  test_15_microstepping_setup_width(stats);
+  stats.print_summary("TEST 15");
 
   std::cout << "\n========================================" << std::endl;
   std::cout << "✅ All StepperEngine Tests Passed!" << std::endl;

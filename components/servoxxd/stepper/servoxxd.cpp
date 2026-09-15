@@ -94,9 +94,9 @@ void ServoXxd::set_acceleration(float accel) {
 
 void ServoXxd::set_speed(const Speed &speed) { this->default_speed_ = speed; }
 
-void ServoXxd::set_microsteps(uint8_t microsteps) {
+void ServoXxd::set_microsteps(uint16_t microsteps) {
   // Validate microstepping value (1-256 per spec)
-  if (microsteps < 1) {
+  if (microsteps < 1 || microsteps > 256) {
     ESP_LOGE(TAG, "Invalid microsteps: %u (must be 1-256)", microsteps);
     return;
   }
@@ -284,8 +284,8 @@ void ServoXxd::setup() {
   ESP_LOGCONFIG(TAG, "Setting up ServoXxd Modbus...");
 
   // Validate configuration
-  if (this->config_.subdivision < 1) {
-    ESP_LOGE(TAG, "Invalid microstepping: %u (must be >= 1)", this->config_.subdivision);
+  if (this->config_.subdivision < 1 || this->config_.subdivision > 256) {
+    ESP_LOGE(TAG, "Invalid microstepping: %u (must be 1-256)", this->config_.subdivision);
     this->mark_failed();
     return;
   }
