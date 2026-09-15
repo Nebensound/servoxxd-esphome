@@ -25,13 +25,7 @@ bool float_eq(float a, float b) { return std::abs(a - b) < EPSILON; }
 // Mock ServoXxd for testing
 class MockServoXxd : public ServoXxd {
  public:
-  MockServoXxd(uint16_t microsteps = 16) : microsteps_(static_cast<uint8_t>(microsteps)) {}
-
-  float get_steps_per_revolution() const override { return 200.0f * microsteps_; }
-  uint8_t get_microstepping() const override { return microsteps_; }
-
- private:
-  uint8_t microsteps_;
+  MockServoXxd(uint16_t microsteps = 16) { set_microsteps(microsteps); }
 };
 
 void test_speed_steps_per_sec() {
@@ -135,7 +129,7 @@ void test_speed_microstepping_compensation() {
   MockServoXxd mock_16(16);
   MockServoXxd mock_64(64);
   MockServoXxd mock_128(128);
-  MockServoXxd mock_255(255);  // Maximum valid for uint8_t encoding
+  MockServoXxd mock_256(256);
 
   // Reference: 16/32/64 should return unchanged
   Speed speed_16(100.0f, SpeedUnit::RPM, &mock_16);
@@ -160,7 +154,11 @@ void test_speed_microstepping_compensation() {
   assert(rpm_128 == 12);  // 100 / 8 = 12 (integer division)
   std::cout << "  ✓ microsteps=128: " << rpm_128 << " RPM (÷8)" << std::endl;
 
-  // microsteps=255: Not a valid menu value, but tests uint8_t encoding boundary
+  Speed speed_256 = Speed::from_rpm(1200.0f, &mock_256);
+  assert(speed_256.rpm_for_hardware() == 75);
+  assert(Speed::from_rpm(-1200.0f, &mock_256).rpm_for_hardware() == -75);
+
+  // microsteps=255: Valid subdivision, but not a menu value
   // Expects no compensation (only menu values 1,2,4,8,16,32,64,128,256 are scaled)
   MockServoXxd mock_255_edge(255);
   Speed speed_255_edge(100.0f, SpeedUnit::RPM, &mock_255_edge);
@@ -248,7 +246,7 @@ void test_speed_invalid_microsteps() {
   assert(speed_1.rpm() > 0.0f);  // Should work with microsteps=1
   std::cout << "  ✓ microsteps=1 works correctly" << std::endl;
 
-  // Test microsteps=255 (maximum valid for uint8_t encoding)
+  // Test microsteps=255 (largest value below the 256 boundary)
   MockServoXxd mock_255(255);
   Speed speed_255(1000.0f, SpeedUnit::STEPS_PER_SEC, &mock_255);
   assert(speed_255.rpm() > 0.0f);  // Should work with microsteps=255

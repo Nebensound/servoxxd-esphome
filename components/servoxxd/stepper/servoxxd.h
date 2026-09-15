@@ -315,7 +315,7 @@ struct ConfigData {
   ControlMode mode{ControlMode::SR_VFOC};  ///< Control mode (default: SR_VFOC)
   HoldingCurrentPercent holding_current_percent{HoldingCurrentPercent::PERCENT_50};  ///< Holding current (default: 50%)
   uint16_t working_current_ma{2000};                                ///< Working current in mA (default: 2000 mA)
-  uint8_t subdivision{16};                                          ///< Microstepping subdivisions 1-256 (default: 16)
+  uint16_t subdivision{16};                                         ///< Microstepping subdivisions 1-256 (default: 16)
   EnPinActive en_pin_active{EnPinActive::EN_LOW};                   ///< EN pin active level (default: active LOW)
   Direction direction{Direction::CW};                               ///< Motor shaft rotation direction (default: CW)
   ScreenMode screen_mode{ScreenMode::AUTO_OFF};                     ///< Screen power mode (default: auto off)
@@ -566,14 +566,15 @@ class ServoXxd : virtual public Component, public stepper::Stepper, public modbu
    * Affects Speed class hardware compensation (rpm_for_hardware).
    * Critical setting - triggers motor restart if changed after setup.
    */
-  void set_microsteps(uint8_t microsteps);
+  void set_microsteps(uint16_t microsteps);
 
   /**
    * @brief Get current microstepping mode
    *
    * Used by Speed class for hardware compensation.
+   * @return Configured subdivision (1-256), without wire-format narrowing.
    */
-  virtual uint8_t get_microstepping() const { return config_.subdivision; }
+  virtual uint16_t get_microstepping() const { return config_.subdivision; }
 
   /**
    * @brief Get current position as float (precise value with microsteps)

@@ -218,7 +218,7 @@ void StepperEngine::setup_motor() {
               }
 
               case Commandtype::SET_SUBDIVISION: {
-                uint8_t desired_microstepping = desired_config.subdivision;
+                uint16_t desired_microstepping = desired_config.subdivision;
 
                 queue_->enqueue(
                     CommandFactory::set_subdivision(desired_microstepping),
