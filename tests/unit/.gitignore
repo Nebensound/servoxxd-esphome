@@ -9,6 +9,7 @@ test_command_factory
 test_command
 test_logging
 test_modbus
+test_microstepping
 
 # Debug/helper executables
 test_debug

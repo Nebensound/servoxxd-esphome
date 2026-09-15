@@ -3,16 +3,11 @@
 # This test compiles the component for actual ESP32 hardware
 # Use this to verify that all hardware-specific features compile correctly
 #
-# Run with: esphome compile tests/test_compile.yaml
-# ESP32 hardware compilation test
-# This test compiles the component for actual ESP32 hardware
-# Use this to verify that all hardware-specific features compile correctly
-#
-# Run with: esphome compile tests/test_compile.yaml
+# Run with: esphome compile tests/esphome/test_compile.yaml
 
 esphome:
-  name: servo42d-esp32-test
-  friendly_name: "Servo42D ESP32 Test"
+  name: servoxxd-esp32-test
+  friendly_name: "ServoXXD ESP32 Test"
 
 esp32:
   board: esp32dev
@@ -49,16 +44,28 @@ modbus:
 stepper:
   - platform: servoxxd
     id: test_stepper
-    microsteps: 1 # vFOC mode only supports microsteps=1
+    microsteps: 16
     speed: 1000 steps/s
     acceleration: 500 steps/s^2
     servo_type: SERVO42D
     mode: POSITION
-    control_mode: SR_VFOC
+    control_mode: SR_CLOSE
 
     # MODBUS configuration
     modbus_id: modbus_bus
     address: 0x01
+
+  # Separate SPEED motor: continuous actions cannot target a POSITION motor.
+  - platform: servoxxd
+    id: speed_stepper
+    servo_type: SERVO42D
+    mode: SPEED
+    control_mode: SR_VFOC
+    microsteps: 1
+    speed: 10 RPM
+    acceleration: 100 RPM/s
+    modbus_id: modbus_bus
+    address: 0x02
 
 # Test Buttons for Actions
 button:
@@ -87,27 +94,27 @@ button:
     name: "Run Continuous - Steps per s"
     on_press:
       - stepper.run_continuous:
-          id: test_stepper
+          id: speed_stepper
           speed: 500 steps/s
 
   - platform: template
     name: "Run Continuous - RPM"
     on_press:
       - stepper.run_continuous:
-          id: test_stepper
+          id: speed_stepper
           speed: 10 RPM
 
   - platform: template
     name: "Run Continuous - Degrees per s"
     on_press:
       - stepper.run_continuous:
-          id: test_stepper
+          id: speed_stepper
           speed: 180 degrees/s
 
   - platform: template
     name: "Stop Motion"
     on_press:
-      - stepper.stop: test_stepper
+      - stepper.stop: speed_stepper
 
   # Position control
   - platform: template
@@ -140,7 +147,7 @@ button:
           percent: 50%
 
   - platform: template
-    name: "Set Holding Current 100%"
+    name: "Set Holding Current 90%"
     on_press:
       - stepper.set_holding_current_percent:
           id: test_stepper
@@ -184,12 +191,12 @@ script:
 
       # Test continuous motion with RPM
       - stepper.run_continuous:
-          id: test_stepper
+          id: speed_stepper
           speed: 5 RPM
       - delay: 3s
 
       # Stop and reset
-      - stepper.stop: test_stepper
+      - stepper.stop: speed_stepper
       - delay: 500ms
       - stepper.report_position:
           id: test_stepper
@@ -207,31 +214,31 @@ script:
   # Test script for unit conversions
   - id: test_unit_conversions
     then:
-      - stepper.enable: test_stepper
+      - stepper.enable: speed_stepper
       - delay: 500ms
 
       # Test with steps/s
       - stepper.run_continuous:
-          id: test_stepper
+          id: speed_stepper
           speed: 500 steps/s
       - delay: 2s
-      - stepper.stop: test_stepper
+      - stepper.stop: speed_stepper
 
       # Test with RPM
       - stepper.run_continuous:
-          id: test_stepper
+          id: speed_stepper
           speed: 10 RPM
       - delay: 2s
-      - stepper.stop: test_stepper
+      - stepper.stop: speed_stepper
 
       # Test with degrees/s
       - stepper.run_continuous:
-          id: test_stepper
+          id: speed_stepper
           speed: 180 degrees/s
       - delay: 2s
-      - stepper.stop: test_stepper
+      - stepper.stop: speed_stepper
 
-      - stepper.disable: test_stepper
+      - stepper.disable: speed_stepper
 
   # Test configuration changes
   - id: test_configuration

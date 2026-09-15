@@ -1,9 +1,9 @@
-# Comprehensive example showing all Servo42D features
-# This demonstrates the complete YAML API with all available settings and actions
+# ServoXXD position-mode configuration and implemented actions.
+# Continuous rotation is shown separately in speed_mode.yaml.
 
 esphome:
-  name: servo42d-comprehensive
-  friendly_name: "Servo42D Comprehensive Example"
+  name: servoxxd-comprehensive
+  friendly_name: "ServoXXD Comprehensive Example"
 
 esp32:
   board: esp32dev
@@ -13,10 +13,10 @@ esp32:
 logger:
   level: DEBUG
 
-# Load component from GitHub
+# Load the development branch; select an existing branch/tag for your deployment.
 external_components:
-  - source: github://Nebensound/servo42d-esphome
-    components: [servo42d_rs485]
+  - source: github://Nebensound/servoxxd-esphome@develop
+    components: [servoxxd]
 
 # RS485 Communication
 uart:
@@ -34,7 +34,7 @@ modbus:
 
 # Servo42D Stepper Motor with all configuration options
 stepper:
-  - platform: servo42d_rs485
+  - platform: servoxxd
     id: my_stepper
     modbus_id: modbus1
     address: 0x01
@@ -45,10 +45,10 @@ stepper:
     servo_type: SERVO42D # SERVO28D | SERVO35D | SERVO42D | SERVO57D
     max_speed: 1000 steps/s # Can use: steps/s, RPM, revolutions/s
     acceleration: inf # Can use: steps/s^2, revolutions/s^2
-    deceleration: inf
 
     # Motor control mode
-    control_mode: SR_VFOC # SR_OPEN (400 RPM) | SR_CLOSE (1500 RPM) | SR_VFOC (3000 RPM, best)
+    control_mode: SR_CLOSE # SR_VFOC requires microsteps: 1
+    mode: POSITION
 
     # Current settings
     # If omitted, default is based on servo_type:
@@ -57,24 +57,18 @@ stepper:
     working_current: 1500mA # or 1.5A
     holding_current_percent: 30% # or 0.3 (ratio) - Range: 10%-90% of working_current (only SR_OPEN/SR_CLOSE, not vFOC)
 
-    # Homing configuration - choose one method:
-
-    # Option A: Real homing with endstop switch
-    home_at_startup: true
-    use_virtual_home: false
-    homing_speed: 500 # RPM
-    homing_direction: CW # CW or CCW (for real homing)
-
-    # Option B: Virtual homing (no endstop needed)
-    # home_at_startup: true
-    # use_virtual_home: true
-    # virtual_home_angle: 180     # 0-359 degrees - motor returns to this angle on power-up
-    # homing_speed: 1000          # RPM
-    # homing_direction: NEAREST   # CW, CCW, or NEAREST (shortest path for virtual homing)
+    # Wire a physical endstop to the motor controller and match its polarity.
+    # VIRTUAL and SENSORLESS home actions are not implemented.
+    homing:
+      mode: ENDSTOP
+      at_startup: false
+      speed: 10 RPM
+      direction: CW
+      endstop_trigger: HIGH
 
     # Display settings
     auto_screen_off: true # Turn off screen after 15 seconds
-    lock_keys_at_startup: false # Prevent button presses on motor display
+    lock_keys_at_startup: UNLOCKED # LOCKED prevents button presses
 
 # Position sensor to monitor motor position
 sensor:
@@ -115,22 +109,6 @@ button:
           target: !lambda "return id(my_stepper).current_position - 1000;"
 
   - platform: template
-    name: "Run Continuous CW"
-    on_press:
-      - stepper.run_continuous:
-          id: my_stepper
-          speed: 10 RPM
-          direction: CW
-
-  - platform: template
-    name: "Run Continuous CCW"
-    on_press:
-      - stepper.run_continuous:
-          id: my_stepper
-          speed: 10 RPM
-          direction: CCW
-
-  - platform: template
     name: "Stop Motor"
     on_press:
       - stepper.stop: my_stepper
@@ -145,11 +123,6 @@ button:
     name: "Home Motor"
     on_press:
       - stepper.home: my_stepper
-
-  - platform: template
-    name: "Reset Position (Zero)"
-    on_press:
-      - stepper.reset_position: my_stepper
 
   - platform: template
     name: "Calibrate Motor"
@@ -169,11 +142,11 @@ button:
 
   # Runtime configuration changes
   - platform: template
-    name: "Set Control Mode: SR_VFOC"
+    name: "Set Control Mode: SR_OPEN"
     on_press:
       - stepper.set_control_mode:
           id: my_stepper
-          control_mode: SR_VFOC
+          control_mode: SR_OPEN
 
   - platform: template
     name: "Set Control Mode: SR_CLOSE"
@@ -194,7 +167,7 @@ button:
     on_press:
       - stepper.set_holding_current_percent:
           id: my_stepper
-          percent: 40
+          percent: 40%
 
   - platform: template
     name: "Set Microstepping: 32"

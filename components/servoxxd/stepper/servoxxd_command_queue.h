@@ -8,6 +8,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <utility>
 
 namespace esphome {
 namespace servoxxd {
@@ -16,8 +17,8 @@ namespace servoxxd {
  * @brief Commandtype priority levels
  *
  * Time-penalty based scheduling with automatic age-promotion:
- * - CRITICAL: Emergency stop (effective_time = 0, always first)
- * - SETUP: Motor initialization commands (effective_time = 1, before NORMAL)
+ * - CRITICAL: Emergency stop (always first among pending commands)
+ * - SETUP: Motor initialization commands (after CRITICAL, before all other priorities)
  * - NORMAL: Movements, configuration (effective_time = enqueued_time, FIFO)
  * - BACKGROUND: Important status reads like position (effective_time = enqueued_time + penalty)
  * - IDLE: Debug/UI data like temperature (effective_time = enqueued_time + penalty)
@@ -54,10 +55,9 @@ enum class CommandState : uint8_t {
  * - Callback support: Notify when command completes (success or failure)
  *
  * **Single-Flight Guarantee:**
- * - execution_guard_ flag acts as mutex
- * - execute_next() returns immediately if guard is set
- * - Response/error handlers clear guard and call execute_next()
- * - Timeout recovery clears guard to prevent queue stall
+ * - An EXECUTING front command prevents another send
+ * - Callback dispatch also blocks sends, including reentrant enqueue/update calls
+ * - Completion removes the command before notifying all its requesters
  *
  * **Integration with Layer 4:**
  * - Uses ITransport interface for protocol-agnostic communication
@@ -97,12 +97,14 @@ class CommandQueue {
    * @brief Enqueue a command
    *
    * @param cmd Command object with type and payload
-   * @param callback Callback to invoke when command completes
-   * @param priority Command priority (CRITICAL/NORMAL/BACKGROUND/IDLE, default: NORMAL)
+   * @param callback Notified once on completion or cancellation, including for deduplicated requests
+   * @param priority Command priority (CRITICAL/SETUP/NORMAL/BACKGROUND/IDLE, default: NORMAL)
    * @param delay_before_next_ms Delay in milliseconds before executing next command (default: 0)
    *                             Used for commands that need recovery time (e.g. RESTART needs 4000ms)
+   *                             Success callbacks wait for this delay; errors notify immediately
+   *                             but delay the next send. Queue timeouts advance immediately.
    * @param deduplicate Optional: true=force dedup, false=force no dedup, nullopt=auto (default: nullopt)
-   *                    Auto mode: BACKGROUND commands are deduplicated, others are not
+   *                    Auto mode: BACKGROUND/IDLE commands are deduplicated, others are not
    */
   void enqueue(const Command &cmd, CommandCallback callback, Priority priority = Priority::NORMAL,
                uint32_t delay_before_next_ms = 0, std::optional<bool> deduplicate = std::nullopt);
@@ -157,8 +159,8 @@ class CommandQueue {
    * @brief Command structure with state machine
    */
   struct QueuedCommand {
-    Command command;                // Command object (contains type and payload)
-    CommandCallback callback;       // Callback for command completion
+    Command command;  // Command object (contains type and payload)
+    std::vector<CommandCallback> callbacks;
     CommandState state;             // State machine state
     Priority priority;              // Command priority (for time-penalty scheduling)
     uint32_t enqueued_time;         // millis() when enqueued (for age-based scheduling)
@@ -167,18 +169,23 @@ class CommandQueue {
 
     QueuedCommand(const Command &cmd, CommandCallback cb, Priority prio, uint32_t delay, uint32_t enqueued)
         : command(cmd),
-          callback(cb),
           state(CommandState::PENDING),
           priority(prio),
           enqueued_time(enqueued),
           sent_time(0),
-          delay_before_next_ms(delay) {}
+          delay_before_next_ms(delay) {
+      if (cb) {
+        callbacks.push_back(std::move(cb));
+      }
+    }
   };
 
   // Queue and execution state
-  std::deque<QueuedCommand> queue_;                  // FIFO queue (deque for efficient reordering)
-  ITransport *transport_{nullptr};                   // Transport layer interface
-  uint32_t delay_until_ms_{0};                       // Delay until this time before executing next command
+  std::deque<QueuedCommand> queue_;  // FIFO queue (deque for efficient reordering)
+  ITransport *transport_{nullptr};   // Transport layer interface
+  uint32_t delay_started_ms_{0};
+  uint32_t delay_duration_ms_{0};
+  bool dispatching_callbacks_{false};
   std::function<void()> pending_callback_{nullptr};  // Callback to invoke after delay
 
   // Configuration
@@ -190,9 +197,8 @@ class CommandQueue {
    * @brief Execute next pending command (if not already executing)
    *
    * From spec: "checks execution guard, sends next command if idle"
-   * - Check execution_guard_ flag (single-flight guarantee)
-   * - If executing: return immediately
-   * - If queue empty: return
+   * - If executing or dispatching callbacks: return immediately
+   * - Deliver delayed callbacks even if no commands remain
    * - Get next PENDING command, transition to EXECUTING, send via transport
    */
   void execute_next();
@@ -214,9 +220,7 @@ class CommandQueue {
    * - PENDING state (not EXECUTING or completed)
    * - Skips EXECUTING command at front of queue
    *
-   * Priority comparison happens in enqueue():
-   * - Higher priority (lower value) → Replace old command
-   * - Same/Lower priority → Keep both
+   * Deduplication retains all callbacks, the highest priority, and the newest delay.
    *
    * @param cmd Full Command object (type + payload) to search for
    * @return Iterator to existing command if found, queue_.end() otherwise
@@ -227,10 +231,9 @@ class CommandQueue {
    * @brief Prepare next command for execution with time-penalty scheduling
    *
    * Implements age-based fairness policy:
-   * - CRITICAL (Priority 0): effective_time = 0 (always first)
-   * - NORMAL (Priority 1): effective_time = enqueued_time (FIFO after CRITICAL)
-   * - BACKGROUND (Priority 2): effective_time = enqueued_time + BACKGROUND_PENALTY_MS
-   * - IDLE (Priority 3): effective_time = enqueued_time + IDLE_PENALTY_MS
+   * - CRITICAL then SETUP: strict precedence, FIFO within each priority
+   * - NORMAL/BACKGROUND/IDLE: lowest penalty minus elapsed age first
+   * - Equivalent effective times retain insertion order
    *
    * Automatic age-promotion: Old low-priority commands eventually overtake newer high-priority ones
    * Example: Old BACKGROUND commands can execute before newer NORMAL commands
@@ -244,9 +247,12 @@ class CommandQueue {
    *
    * @param cmd Commandtype to calculate for
    * @param now Current time (millis())
-   * @return Effective time (lower values execute first)
+   * Uses elapsed unsigned time to handle millis() rollover for waits under one full clock cycle.
+   * @return Effective time relative to now (lower values execute first)
    */
-  uint32_t calculate_effective_time(const QueuedCommand &cmd, uint32_t now);
+  int64_t calculate_effective_time(const QueuedCommand &cmd, uint32_t now);
+
+  void notify_callbacks(std::vector<CommandCallback> callbacks, bool success, const Command &cmd);
 };
 
 }  // namespace servoxxd
