@@ -7,6 +7,20 @@ on:
     branches: [main, develop]
 
 jobs:
+  configurations:
+    name: Discover firmware configurations
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.discover.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Discover examples and integration fixtures
+        id: discover
+        run: echo "matrix=$(python tests/configurations.py)" >> "$GITHUB_OUTPUT"
+
   unit-tests:
     name: Unit Tests
     runs-on: ubuntu-latest
@@ -33,11 +47,10 @@ jobs:
 
   esphome-compile:
     name: ESPHome Compile Tests
+    needs: configurations
     runs-on: ubuntu-latest
     strategy:
-      matrix:
-        yaml-file:
-          - tests/esphome/*.yaml
+      matrix: ${{ fromJSON(needs.configurations.outputs.matrix) }}
 
     steps:
       - name: Checkout code
@@ -60,22 +73,20 @@ jobs:
         run: |
           pip install esphome
 
-      - name: Create secrets.yaml
-        run: |
-          cd tests/esphome
-          cat > secrets.yaml << 'EOF'
-          # ESPHome Secrets (CI Generated)
-          # WiFi credentials
-          wifi_ssid: "dummy_ci_ssid"
-          wifi_password: "dummy_ci_password"
-
-          # Fallback AP credentials
-          fallback_ap_password: "test1234"
-          EOF
-
       - name: Compile ${{ matrix.yaml-file }}
         run: |
-          esphome compile ${{ matrix.yaml-file }}
+          python tests/local_config.py compile "${{ matrix.yaml-file }}"
+
+  configuration-tests:
+    name: Configuration regression tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install esphome
+      - run: python -m unittest discover -s tests -p 'test_*.py'
 
   format-check:
     name: Format Check (C++, Python, YAML)

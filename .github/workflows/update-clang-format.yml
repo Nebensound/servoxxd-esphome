@@ -14,9 +14,22 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Test Ruff extraction
+        run: python -m unittest discover -s tests -p test_extract_ruff.py
+
       - name: Download ESPHome .clang-format
         run: |
-          curl -s https://raw.githubusercontent.com/esphome/esphome/dev/.clang-format -o .clang-format.new
+          curl --fail --show-error --silent --location https://raw.githubusercontent.com/esphome/esphome/dev/.clang-format -o .clang-format.new
+          if ! test -s .clang-format.new || ! head -n 1 .clang-format.new | grep -qx -- '---'; then
+            echo "::error::Empty or invalid upstream .clang-format download"
+            exit 1
+          fi
+          clang-format --style=file:.clang-format.new --dump-config > /dev/null
 
           # Header hinzufügen
           cat > .clang-format.tmp << 'EOF'
@@ -33,18 +46,8 @@ jobs:
 
       - name: Download ESPHome pyproject.toml (ruff config)
         run: |
-          # Nur ruff Konfiguration extrahieren
-          curl -s https://raw.githubusercontent.com/esphome/esphome/dev/pyproject.toml | \
-          awk '/^\[tool\.ruff\]/,/^$/ { if (/^\[tool\.ruff\]/ || /^\[tool\.ruff\./) print; else if (/^[[:space:]]/ || /^$/) print; else if (/^[a-z]/) exit }' > pyproject.toml.new
-
-          # Header hinzufügen
-          cat > pyproject.toml << 'EOF'
-          # Automatically synced from: https://github.com/esphome/esphome/blob/dev/pyproject.toml
-          # DO NOT EDIT - Changes will be overwritten by update-format-configs workflow
-
-          EOF
-
-          cat pyproject.toml.new >> pyproject.toml
+          curl --fail --show-error --silent --location https://raw.githubusercontent.com/esphome/esphome/dev/pyproject.toml -o pyproject.toml.new
+          python .github/scripts/extract_ruff.py pyproject.toml.new pyproject.toml
           rm pyproject.toml.new
 
       - name: Create Pull Request

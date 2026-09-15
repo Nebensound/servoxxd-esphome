@@ -1,6 +1,19 @@
-# Servo42D RS485 Examples
+# ServoXXD RS485 Examples
 
-This directory contains example configurations for the `servo42d_rs485` ESPHome component.
+This directory contains example configurations for the `servoxxd` ESPHome component.
+
+All examples load the component from GitHub and can be copied into your ESPHome
+configuration directory without cloning this repository:
+
+```yaml
+external_components:
+  - source: github://Nebensound/servoxxd-esphome@develop
+    components: [servoxxd]
+```
+
+The default `@develop` follows ongoing development. Select an existing branch/tag
+appropriate to your deployment by changing the suffix; no stable release is implied
+by these examples. See the [known limitations](../CHANGELOG.md).
 
 ## Setup
 
@@ -15,6 +28,7 @@ This directory contains example configurations for the `servo42d_rs485` ESPHome 
    ```yaml
    wifi_ssid: "YourActualWiFiSSID"
    wifi_password: "YourActualPassword"
+   api_encryption_key: "YOUR_PRIVATE_BASE64_KEY"
    ota_password: "YourOTAPassword"
    fallback_ap_password: "fallback123"
    ```
@@ -27,19 +41,19 @@ Before using these examples, ensure your MKS Servo42D/57D motor is properly conf
 
 1. **Enable MODBUS-RTU Mode** (Critical!)
    - Use the motor's built-in display and buttons
-   - Navigate to register `0x008E` 
-   - Set value to `1` (Enable)
+   - Set the `Mb_RTU` menu option to `Enable`
    - Without this, the motor won't respond to MODBUS commands!
 
 2. **Set Communication Parameters**
-   - Baud rate: `38400` (recommended) or `115200`
+   - Baud rate: match the YAML (`38400`, or `9600` in the comprehensive example)
    - Parity: `EVEN`
    - Stop bits: `1`
    - Motor address: `1` (or any unique value for multi-motor setups)
 
 3. **Configure Work Mode**
-   - Set to `SR_vFOC` (mode 5) for best performance with serial control
-   - Or `SR_CLOSE` (mode 4) for closed-loop position control
+   - The basic/speed examples use `SR_VFOC` with `microsteps: 1`
+   - Positioning examples use `SR_CLOSE` with `microsteps: 16`
+   - Do not combine `SR_VFOC` with larger microstep values
 
 4. **Wire RS485 Connection**
    - ESP TX -> RS485 module DI (Data Input)
@@ -76,26 +90,48 @@ Note on currents by model:
 ### 3. `multi_motor.yaml`
 Shows how to control multiple motors on one RS485 bus:
 - Three motors with different addresses
-- Coordinated homing sequences
-- Proper timing between motor commands
+- Individual homing buttons with explicit ENDSTOP configuration
 
 **Use this if:** You're building a multi-axis system (CNC, 3D printer, robot arm, etc.)
 
 Each motor can have its own `servo_type` and `working_current`.
 
+### 4. `comprehensive_example.yaml`
+Shows position-mode configuration, movement, current/control-mode changes, and
+display actions. It is not an exhaustive list of every specified feature.
+
+### 5. `speed_mode.yaml`
+Shows continuous rotation and stopping on a separate `mode: SPEED` motor. The
+current validator rejects negative static speeds, so this example uses CW only.
+
+### Homing requirements
+Advanced, comprehensive, and multi-motor examples require physical endstops wired
+to the motor controllers. Adjust `endstop_trigger` and direction for the actual
+wiring. Homing is manual (`at_startup: false`); confirm successful completion before
+commanding another move. Fixed delays do not prove completion. `VIRTUAL` and
+`SENSORLESS` home actions are not implemented. `report_position` does not yet
+provide a persistent motion offset.
+
 ## Testing Your Setup
 
-1. Copy one of the example files
+1. Copy an example into your ESPHome configuration directory; no source change or checkout is needed
 2. Adjust GPIO pins to match your hardware
 3. Create a `secrets.yaml` file for WiFi credentials (advanced examples only)
 4. Compile with: `esphome compile your_config.yaml`
 5. Upload to your ESP32: `esphome upload your_config.yaml`
 6. Monitor logs: `esphome logs your_config.yaml`
 
+To validate all examples without uploading, use the Python environment containing
+ESPHome: `python -m unittest discover -s tests -p test_examples.py` from the repository
+root. Tests and CI check the committed GitHub source, then override only temporary
+copies with the current checkout's absolute component path. They use public
+placeholder secrets, never device credentials. Configuration/compilation checks
+do not verify motor behavior.
+
 ## Troubleshooting
 
 **Motor doesn't respond:**
-- ✅ Check if MODBUS-RTU is enabled (register 0x008E = 1)
+- ✅ Check if the Mb_RTU menu option is enabled
 - ✅ Verify baud rate matches between ESP and motor
 - ✅ Check RS485 wiring (A to A, B to B)
 - ✅ Ensure motor address matches configuration
