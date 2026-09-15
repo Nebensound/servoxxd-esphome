@@ -8,7 +8,7 @@ namespace servoxxd {
 
 static const char *const TAG = "servoxxd.modbus";
 
-ModbusTransport::ModbusTransport(modbus::ModbusDevice *device) : device_(device) {}
+ModbusTransport::ModbusTransport(modbus::ModbusClientDevice *device) : device_(device) {}
 
 Result ModbusTransport::execute_command(const Command &cmd) {
   if (state_ != State::IDLE) {
@@ -25,7 +25,10 @@ Result ModbusTransport::execute_command(const Command &cmd) {
       uint8_t expected_payload_length = cmd.expected_response_length();
       uint16_t register_count = expected_payload_length / 2;  // Modbus registers are 16-bit
 
-      device_->send(function_code, register_address, register_count, 0, nullptr);
+      if (!device_->read_input_registers(register_address, register_count)) {
+        ESP_LOGE(TAG, "Modbus queue rejected read for register 0x%04X", register_address);
+        return {false, ErrorCode::BUSY};
+      }
 
       state_ = State::WAITING_READ;
       pending_command_.emplace(cmd);
@@ -49,19 +52,25 @@ Result ModbusTransport::execute_command(const Command &cmd) {
         padded.assign(data.begin(), data.end());
       }
 
-      uint16_t register_count = padded.size() / 2;
-
+      bool accepted;
       if (function_code == 0x06) {
         if (padded.size() != 2) {
-          ESP_LOGE(TAG, "0x06 requires exactly 1 register (2 bytes), got %u", (unsigned) padded.size());
+          ESP_LOGE(TAG, "0x06 requires exactly 1 register (2 bytes), got %zu", padded.size());
           return {false, ErrorCode::PROTOCOL_ERROR};
         }
-        // number_of_entities must be > 0: newer ESPHome refuses an empty PDU for rc = 0
-        // (value is otherwise ignored for 0x06 - the two payload bytes are the register value)
-        device_->send(0x06, register_address, 1, 2, padded.data());
+        const uint16_t value = (static_cast<uint16_t>(padded[0]) << 8) | padded[1];
+        accepted = device_->write_single_register(register_address, value);
       } else {
-        // 0x10: MUST NOT use rc=0
-        device_->send(0x10, register_address, register_count, padded.size(), padded.data());
+        std::vector<uint16_t> registers;
+        registers.reserve(padded.size() / 2);
+        for (size_t i = 0; i < padded.size(); i += 2) {
+          registers.push_back((static_cast<uint16_t>(padded[i]) << 8) | padded[i + 1]);
+        }
+        accepted = device_->write_multiple_registers(register_address, registers);
+      }
+      if (!accepted) {
+        ESP_LOGE(TAG, "Modbus queue rejected write for register 0x%04X", register_address);
+        return {false, ErrorCode::BUSY};
       }
 
       state_ = State::WAITING_WRITE;
@@ -99,9 +108,7 @@ void ModbusTransport::update() {
     return;
   }
 
-  // Note: ESPHome's ModbusDevice handles response parsing via callbacks
-  // Upper layers (CommandQueue) should call on_modbus_data() / on_modbus_error()
-  // This implementation provides a simplified synchronous-style wrapper
+  // Responses arrive through ESPHome's ModbusClientDevice callbacks.
 }
 
 void ModbusTransport::set_response_callback(std::function<void(const Command &)> cb) { response_callback_ = cb; }
@@ -110,15 +117,51 @@ void ModbusTransport::set_error_callback(std::function<void(const Command &, Err
 
 bool ModbusTransport::check_timeout() { return (millis() - timeout_start_ms_) > timeout_ms_; }
 
+bool ModbusTransport::matches_pending_request_(std::span<const uint8_t> request_pdu) const {
+  if (!is_busy() || !pending_command_ || request_pdu.size() < 5) {
+    return false;
+  }
+  const uint16_t address = (static_cast<uint16_t>(request_pdu[1]) << 8) | request_pdu[2];
+  return request_pdu[0] == pending_command_->function_code() && address == pending_command_->register_address();
+}
+
+void ModbusTransport::handle_modbus_response(std::span<const uint8_t> request_pdu,
+                                             std::span<const uint8_t> response_pdu) {
+  if (!matches_pending_request_(request_pdu)) {
+    ESP_LOGW(TAG, "Ignoring Modbus response without a matching pending request");
+    return;
+  }
+  const uint8_t function_code = pending_command_->function_code();
+  const size_t payload_offset = function_code == 0x04 ? 2 : 1;
+  if (response_pdu.size() < payload_offset || response_pdu[0] != function_code ||
+      (function_code == 0x04 && response_pdu[1] != response_pdu.size() - payload_offset)) {
+    ESP_LOGW(TAG, "Malformed Modbus response PDU");
+    state_ = State::IDLE;
+    if (error_callback_) {
+      error_callback_(*pending_command_, ErrorCode::PROTOCOL_ERROR);
+    }
+    return;
+  }
+  handle_response(std::vector<uint8_t>(response_pdu.begin() + payload_offset, response_pdu.end()));
+}
+
+void ModbusTransport::handle_modbus_error(std::span<const uint8_t> request_pdu, modbus::ExceptionCode exception_code) {
+  if (!matches_pending_request_(request_pdu)) {
+    ESP_LOGW(TAG, "Ignoring Modbus error without a matching pending request");
+    return;
+  }
+  handle_error_response(request_pdu[0], static_cast<uint8_t>(exception_code));
+}
+
 void ModbusTransport::handle_response(const std::vector<uint8_t> &data) {
-  // IMPORTANT: ESPHome's ModbusDevice::on_modbus_data() provides ONLY the payload data!
-  // Function code, slave address, and CRC are already processed/validated by ESPHome.
-  //
-  // Expected payload formats (WITHOUT function code):
+  // Payload formats after stripping the function code and read byte count:
   // - Read (0x04):  [data...] (just the raw register values)
   // - Write (0x06): [addr_hi][addr_lo][value_hi][value_lo]
   // - Write (0x10): [addr_hi][addr_lo][count_hi][count_lo]
-  ;
+  if (!is_busy() || !pending_command_) {
+    ESP_LOGW(TAG, "Ignoring response with no pending command");
+    return;
+  }
   uint8_t function_code = pending_command_->function_code();
   std::vector<uint8_t> send_payload = pending_command_->payload;
   // Recreate the padded payload we actually transmitted so validation
@@ -130,7 +173,7 @@ void ModbusTransport::handle_response(const std::vector<uint8_t> &data) {
   expected_payload.insert(expected_payload.end(), send_payload.begin(), send_payload.end());
 
   if (data.size() < 1) {
-    ESP_LOGW(TAG, "Response too short: %d bytes", data.size());
+    ESP_LOGW(TAG, "Response too short: %zu bytes", data.size());
     state_ = State::IDLE;
     if (error_callback_) {
       error_callback_(pending_command_.value(), ErrorCode::PROTOCOL_ERROR);
@@ -145,7 +188,7 @@ void ModbusTransport::handle_response(const std::vector<uint8_t> &data) {
 
     uint8_t expected_payload_length = pending_command_->expected_response_length();
     if (data.size() != expected_payload_length) {
-      ESP_LOGW(TAG, "Read response size mismatch: expected %d bytes, received %d", expected_payload_length,
+      ESP_LOGW(TAG, "Read response size mismatch: expected %u bytes, received %zu", expected_payload_length,
                data.size());
       state_ = State::IDLE;
       if (error_callback_) {
@@ -166,8 +209,8 @@ void ModbusTransport::handle_response(const std::vector<uint8_t> &data) {
     // Write Single Register (0x06) or Write Multiple Registers (0x10)
     // Payload format: [addr_hi][addr_lo][value/count_hi][value/count_lo]
 
-    if (data.size() < 4) {
-      ESP_LOGW(TAG, "Write response too short: %d bytes (expected 4)", data.size());
+    if (data.size() != 4) {
+      ESP_LOGW(TAG, "Write response size mismatch: %zu bytes (expected 4)", data.size());
       state_ = State::IDLE;
       if (error_callback_) {
         error_callback_(pending_command_.value(), ErrorCode::PROTOCOL_ERROR);
@@ -206,7 +249,7 @@ void ModbusTransport::handle_response(const std::vector<uint8_t> &data) {
         // Validate value bytes only (data[2:3] should match send_payload)
         // Response format: [addr_hi][addr_lo][value_hi][value_lo]
         if (expected_payload.size() != 2) {
-          ESP_LOGW(TAG, "Invalid payload size for 0x06: %d bytes (expected 2)", expected_payload.size());
+          ESP_LOGW(TAG, "Invalid payload size for 0x06: %zu bytes (expected 2)", expected_payload.size());
           state_ = State::IDLE;
           if (error_callback_) {
             error_callback_(pending_command_.value(), ErrorCode::PROTOCOL_ERROR);
@@ -229,6 +272,15 @@ void ModbusTransport::handle_response(const std::vector<uint8_t> &data) {
       case 0x10: {
         // Response contains register count
         uint16_t response_count = (static_cast<uint16_t>(data[2]) << 8) | data[3];
+        if (response_count != expected_payload.size() / 2) {
+          ESP_LOGW(TAG, "Write response register count mismatch: expected %zu, received %u",
+                   expected_payload.size() / 2, response_count);
+          state_ = State::IDLE;
+          if (error_callback_) {
+            error_callback_(*pending_command_, ErrorCode::INVALID_RESPONSE);
+          }
+          return;
+        }
         break;
       }
       default:
@@ -253,6 +305,10 @@ void ModbusTransport::handle_response(const std::vector<uint8_t> &data) {
 }
 
 void ModbusTransport::handle_error_response(uint8_t function_code, uint8_t exception_code) {
+  if (!is_busy() || !pending_command_) {
+    ESP_LOGW(TAG, "Ignoring error with no pending command");
+    return;
+  }
   // Modbus error response received - clear transport state immediately!
   // This prevents the 4-second timeout wait when motor rejects a command
   ESP_LOGW(TAG, "Modbus error for command 0x%02X: function=0x%02X, exception=%d",

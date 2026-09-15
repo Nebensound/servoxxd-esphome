@@ -7,6 +7,10 @@ The `servoxxd` stepper platform allows you to control MKS ServoXXD closed-loop s
 
 ## Installation
 
+**Requires ESPHome 2026.8.2 or newer.** Older versions are rejected during
+configuration validation. The component uses ESPHome's current Modbus client API;
+update ESPHome before updating this component.
+
 Add this external component to your ESPHome configuration:
 
 ```yaml

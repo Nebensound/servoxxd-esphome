@@ -32,6 +32,12 @@ make test
 ### Run ESPHome Tests
 
 ```bash
+# Python registration and minimum-version regressions (ESPHome must be installed)
+python -m unittest discover -s tests/python -v
+
+# Issue #16: ESP-IDF, all 20 actions, local components, no secrets or uploads
+esphome compile tests/esphome/test_build_warnings.yaml
+
 # Compile test (no upload)
 esphome compile tests/esphome/test_compile.yaml
 
@@ -141,3 +147,21 @@ Both tests should compile without errors. Warnings are acceptable if they come f
 
 **Success:** Component compiles cleanly  
 **Failure:** Check error messages for syntax or dependency issues
+
+### Build-warning regressions
+
+Use ESPHome **2026.8.2 or newer**. `test_build_warnings.yaml` covers both motor modes,
+ENDSTOP homing configuration, templated positions, and every ServoXXD action under
+ESP-IDF. Its scripts are compile coverage only: none are invoked at boot.
+
+Action registrations are synchronous in ESPHome's automation sense: they enqueue
+motor operations and return without deferring the next automation action. This
+does not mean a movement or homing operation has already finished.
+
+The unit suite also checks Modbus FC04/FC06/FC10 encoding, PDU response handling,
+queue rejection, and errors using a mock of the modern client API. Logging checks
+compile all component sources with format checking enabled at every log level;
+they also verify fractional positions and holding-current percentages in output.
+
+Warnings from other external components, GPIO strapping-pin checks, and remote
+build bundle/secrets checks are outside ServoXXD's scope and are not suppressed.

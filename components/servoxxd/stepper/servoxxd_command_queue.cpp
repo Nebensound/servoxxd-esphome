@@ -1,6 +1,7 @@
 #include "servoxxd_command_queue.h"
 #include "esphome/core/log.h"
 #include "esphome/core/hal.h"
+#include <cinttypes>
 
 namespace esphome {
 namespace servoxxd {
@@ -9,7 +10,7 @@ static const char *const TAG = "servoxxd.queue";
 
 CommandQueue::CommandQueue(ITransport *transport, uint32_t timeout_ms)
     : transport_(transport), timeout_ms_(timeout_ms) {
-  ESP_LOGCONFIG(TAG, "CommandQueue initialized: timeout=%ums", timeout_ms_);
+  ESP_LOGCONFIG(TAG, "CommandQueue initialized: timeout=%" PRIu32 "ms", timeout_ms_);
 
   // Register callbacks with transport layer
   if (transport_) {
@@ -277,8 +278,8 @@ void CommandQueue::check_timeout() {
   uint32_t elapsed = millis() - current_cmd.sent_time;
 
   if (elapsed > timeout_ms_) {
-    ESP_LOGW(TAG, "Command 0x%04X timed out after %ums (timeout=%ums)", current_cmd.command.register_address(), elapsed,
-             timeout_ms_);
+    ESP_LOGW(TAG, "Command 0x%04X timed out after %" PRIu32 "ms (timeout=%" PRIu32 "ms)",
+             current_cmd.command.register_address(), elapsed, timeout_ms_);
 
     // Invoke callback with failure
     if (current_cmd.callback) {

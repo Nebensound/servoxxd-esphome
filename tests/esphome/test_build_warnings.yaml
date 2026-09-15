@@ -1,0 +1,95 @@
+---
+# Compile only: local components, no network secrets and no boot-time actions.
+esphome:
+  name: servoxxd-warning-test
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+external_components:
+  - source:
+      type: local
+      path: ../../components
+    components: [servoxxd]
+
+logger:
+  level: VERY_VERBOSE
+
+uart:
+  tx_pin: GPIO17
+  rx_pin: GPIO16
+  baud_rate: 9600
+
+modbus:
+  id: motor_bus
+
+stepper:
+  - platform: servoxxd
+    id: position_motor
+    modbus_id: motor_bus
+    address: 1
+    servo_type: SERVO42D
+    mode: POSITION
+    speed: 30 RPM
+    acceleration: 1 revolutions/s^2
+    homing:
+      mode: ENDSTOP
+      at_startup: false
+      direction: CW
+      speed: 30 RPM
+      endstop_trigger: HIGH
+  - platform: servoxxd
+    id: speed_motor
+    modbus_id: motor_bus
+    address: 2
+    servo_type: SERVO42D
+    mode: SPEED
+    speed: 30 RPM
+
+script:
+  - id: compile_actions
+    parameters:
+      target_revolutions: float
+    then:
+      - stepper.set_target:
+          id: position_motor
+          target:
+            value: !lambda return target_revolutions;
+            unit: REVOLUTIONS
+      - stepper.report_position:
+          id: position_motor
+          position: 0
+      - stepper.home: position_motor
+      - stepper.set_zero: position_motor
+      - stepper.run_continuous:
+          id: speed_motor
+          speed: 30 RPM
+      - stepper.stop: speed_motor
+      - stepper.emergency_stop: position_motor
+      - stepper.enable: position_motor
+      - stepper.disable: position_motor
+      - stepper.calibrate: position_motor
+      - stepper.release_protection: position_motor
+      - stepper.restart: position_motor
+      - stepper.set_control_mode:
+          id: position_motor
+          control_mode: SR_VFOC
+      - stepper.set_working_current:
+          id: position_motor
+          current: 1000
+      - stepper.set_holding_current_percent:
+          id: position_motor
+          percent: 50%
+      - stepper.set_microstepping:
+          id: position_motor
+          subdivision: 1
+      - stepper.set_speed:
+          id: position_motor
+          speed: 30 RPM
+      - stepper.set_acceleration:
+          id: position_motor
+          acceleration: 1 revolutions/s^2
+      - stepper.key_lock: position_motor
+      - stepper.key_unlock: position_motor

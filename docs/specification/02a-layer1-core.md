@@ -14,7 +14,7 @@
 **Class:** ServoXxd  
 **Inherits:** 
 - [`stepper::Stepper`](https://github.com/esphome/esphome/blob/dev/esphome/components/stepper/stepper.h) (ESPHome base stepper interface)
-- [`modbus::ModbusDevice`](https://github.com/esphome/esphome/blob/dev/esphome/components/modbus/modbus_controller.h) (ESPHome Modbus client)
+- [`modbus::ModbusClientDevice`](https://github.com/esphome/esphome/blob/dev/esphome/components/modbus/modbus.h) (ESPHome Modbus client, requires ESPHome 2026.8.2 or newer)
 - [`Component`](https://github.com/esphome/esphome/blob/dev/esphome/core/component.h) (ESPHome component lifecycle)
 
 **Design Pattern:** Facade - provides simple interface to complex subsystem
@@ -38,10 +38,10 @@ The component follows ESPHome's standard architecture by inheriting from three b
 > [!Important]
 > The `stepper::Stepper` base class provides a **position-centric abstraction** (absolute target, current position). Our component extends this to support both **Position Mode** (using the base Stepper API) and **Speed Mode** (continuous rotation, bypassing position tracking). Internal state and action routing adapt to the configured operating mode.
 
-### 2. modbus::ModbusDevice (ESPHome Modbus client)
+### 2. modbus::ModbusClientDevice (ESPHome Modbus client)
 
 - Handles RS485 communication via ESPHome's modbus component
-- Provides `send()`, `on_modbus_data()`, `on_modbus_error()` for request/response flow
+- Provides typed `read_input_registers()`, `write_single_register()`, `write_multiple_registers()` request helpers and `on_response()` / `on_error()` callbacks
 - Manages device address and parent modbus controller reference
 
 ### 3. Component (ESPHome component lifecycle)
@@ -56,8 +56,8 @@ The component follows ESPHome's standard architecture by inheriting from three b
   - Non-virtual base methods (cannot override, may overload): `set_target(int32_t)`, `report_position(int32_t)`, `set_max_speed(float)`.
   - Overloads provided by this component: `set_target(Position)`, `report_position(Position)`, `set_speed(Speed)`.
   - Synchronization: Keep base members `current_position`/`target_position` in sync with internal `Position` objects; monitor external changes in `loop()`.
-- From `modbus::ModbusDevice`:
-  - Implement `on_modbus_data(...)` and `on_modbus_error(...)` - these forward to active ITransport implementation (Layer 4)
+- From `modbus::ModbusClientDevice`:
+  - Implement `on_response(std::span<const uint8_t> request_pdu, std::span<const uint8_t> response_pdu)` and `on_error(std::span<const uint8_t> request_pdu, modbus::ExceptionCode exception_code)` - these forward to the active transport implementation (Layer 4)
   - These are ESPHome-specific callbacks; SerialTransport would use different integration mechanism
   - These are implementation details of the transport layer and should not be called directly
 
@@ -227,9 +227,9 @@ uint32_t setup_start_time_;           // Time when setup_motor() started
 - StepperEngine manages the queue (not ServoXxd directly)
 - ServoXxd only bridges transport callbacks to engine
 **Layer 4 (Transport + CommandDecoder):**
-- ServoXxd inherits ModbusDevice (ESPHome framework requirement)
+- ServoXxd inherits ModbusClientDevice (ESPHome framework requirement)
 - ESPHome protocol callbacks are forwarded to active ITransport implementation
-- Current implementation: ModbusTransport (via ModbusDevice callbacks)
+- Current implementation: ModbusTransport (via ModbusClientDevice callbacks)
 - Future: SerialTransport would use different ESPHome integration (e.g., uart component callbacks)
 - CommandDecoder (in Layer 4) provides encode/decode functions for all commands
 - StepperEngine (Layer 2) uses codec to prepare command data and parse responses

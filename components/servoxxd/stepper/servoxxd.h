@@ -15,6 +15,7 @@
 #include "servoxxd_acceleration.h"
 #include "servoxxd_position.h"
 #include <optional>
+#include <span>
 #include <string>
 
 namespace esphome {
@@ -25,7 +26,7 @@ class StepperEngine;
 
 // Forward declarations (Layer 4)
 // Note: ServoXxd is tightly coupled to ModbusTransport because it inherits from
-// ModbusDevice and bridges ESPHome's Modbus callbacks to the transport layer.
+// ModbusClientDevice and bridges ESPHome's Modbus callbacks to the transport layer.
 class ModbusTransport;
 enum class Commandtype : uint16_t;
 
@@ -430,7 +431,7 @@ struct HomingConfig {
  *
  * This is the facade class that integrates with ESPHome. It inherits from:
  * - stepper::Stepper: Provides ESPHome stepper interface
- * - modbus::ModbusDevice: Enables Modbus communication
+ * - modbus::ModbusClientDevice: Enables Modbus communication
  * - Component: ESPHome lifecycle management
  *
  * **Architecture:**
@@ -446,7 +447,7 @@ struct HomingConfig {
  * - Modbus communication setup
  * - Helper methods for unit conversions (steps ↔ ticks)
  */
-class ServoXxd : virtual public Component, public stepper::Stepper, public modbus::ModbusDevice {
+class ServoXxd : virtual public Component, public stepper::Stepper, public modbus::ModbusClientDevice {
  public:
   // ==== Stepper Compatibility Methods ====
   // These methods provide compatibility with ESPHome's stepper interface
@@ -845,22 +846,22 @@ class ServoXxd : virtual public Component, public stepper::Stepper, public modbu
   void disable();
 
   // ============================================================================
-  // Modbus Callbacks (called by ModbusDevice base class)
+  // Modbus Callbacks (called by ModbusClientDevice base class)
   // ============================================================================
 
   /**
    * @brief Handle Modbus response
    *
-   * Forwards response to ModbusTransport::handle_response() for command completion.
+   * Forwards PDUs to ModbusTransport::handle_modbus_response() for command completion.
    */
-  void on_modbus_data(const std::vector<uint8_t> &data) override;
+  void on_response(std::span<const uint8_t> request_pdu, std::span<const uint8_t> response_pdu) override;
 
   /**
    * @brief Handle Modbus error
    *
    * Logs error details.
    */
-  void on_modbus_error(uint8_t function_code, uint8_t exception_code) override;
+  void on_error(std::span<const uint8_t> request_pdu, modbus::ExceptionCode exception_code) override;
 
   // ============================================================================
   // Helper Methods (used by unit type classes and StepperEngine)
@@ -899,8 +900,8 @@ class ServoXxd : virtual public Component, public stepper::Stepper, public modbu
 
  private:
   // Core components (4-layer architecture)
-  // Note: ServoXxd uses ModbusTransport specifically because it inherits from ModbusDevice.
-  // The ESPHome ModbusDevice callbacks (on_modbus_data, on_modbus_error) are forwarded
+  // Note: ServoXxd uses ModbusTransport specifically because it inherits from ModbusClientDevice.
+  // The ESPHome ModbusClientDevice callbacks (on_response, on_error) are forwarded
   // to ModbusTransport-specific methods. If Serial transport is added in the future,
   // a new SerialXxd class would be created that uses SerialTransport*.
   ModbusTransport *transport_{nullptr};  // Layer 4: Modbus-specific transport

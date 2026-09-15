@@ -1,7 +1,7 @@
 # Makefile for ServoXxd Unit Tests
 
 CXX = g++
-CXXFLAGS = -std=c++17 -Wall -Wextra -I../.. -I. -I../../components/servoxxd/stepper
+CXXFLAGS = -std=c++20 -Wall -Wextra -I../.. -I. -I../../components/servoxxd/stepper
 LDFLAGS =
 
 # Source files
@@ -34,14 +34,14 @@ ENGINE_SOURCES = \
 	$(MOCK_DIR)/hal.cpp
 
 # Test executables (all active tests)
-TESTS = test_speed test_acceleration test_position test_command_queue test_stepper_engine test_command_decoder test_command_factory test_command test_public_header
+TESTS = test_speed test_acceleration test_position test_command_queue test_stepper_engine test_command_decoder test_command_factory test_command test_public_header test_logging test_modbus
 
 # Colors for output
 GREEN = \033[0;32m
 RED = \033[0;31m
 NC = \033[0m # No Color
 
-.PHONY: all clean run test
+.PHONY: all clean run test check_log_formats
 
 all: $(TESTS)
 
@@ -66,6 +66,10 @@ test_stepper_engine: test_stepper_engine.cpp $(ENGINE_SOURCES)
 	@echo "Building $@..."
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
 
+test_modbus: test_modbus.cpp $(SOURCES)
+	@echo "Building $@..."
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
+
 test_command_decoder: test_command_decoder.cpp $(COMPONENT_DIR)/servoxxd_command_decoder.cpp $(COMPONENT_DIR)/servoxxd_speed.cpp $(COMPONENT_DIR)/servoxxd_acceleration.cpp $(COMPONENT_DIR)/servoxxd_position.cpp
 	@echo "Building $@..."
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
@@ -82,12 +86,28 @@ test_public_header: test_public_header.cpp $(wildcard $(COMPONENT_DIR)/*.h)
 	@echo "Building $@..."
 	$(CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS)
 
+# Enable every log level and reject format regressions, not unrelated warnings.
+test_logging: test_logging.cpp $(SOURCES) $(wildcard $(COMPONENT_DIR)/*.h) $(MOCK_DIR)/log.h
+	@echo "Building $@ with printf format checking..."
+	$(CXX) $(CXXFLAGS) -DSERVOXXD_TEST_LOGGING -Werror=format -o $@ test_logging.cpp $(SOURCES) $(LDFLAGS)
+
+# Negative controls ensure no log level can silently discard format checking.
+check_log_formats:
+	@for level in E W I CONFIG D V VV; do \
+		if printf '#include "esphome/core/log.h"\nvoid check() { ESP_LOG%s("test", "%%d", 1.5); }\n' "$$level" | \
+			$(CXX) $(CXXFLAGS) -DSERVOXXD_TEST_LOGGING -Werror=format -x c++ -fsyntax-only - >/dev/null 2>&1; then \
+			echo "ERROR: ESP_LOG$$level accepted an invalid printf argument"; \
+			exit 1; \
+		fi; \
+	done
+	@echo "All log levels reject invalid printf arguments."
+
 test_command_codec_extended: test_command_codec_extended.cpp
 	@echo "Building $@..."
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
 
 # Run all tests
-test: $(TESTS)
+test: $(TESTS) check_log_formats
 	@echo ""
 	@echo "$(GREEN)========================================$(NC)"
 	@echo "$(GREEN)Running All Unit Tests$(NC)"
@@ -141,6 +161,8 @@ help:
 	@echo "  test_position    Build Position class tests"
 	@echo "  test_command_queue Build CommandQueue tests"
 	@echo "  test_stepper_engine Build StepperEngine tests"
+	@echo "  test_logging     Check all log formats and numeric output"
+	@echo "  test_modbus      Build modern Modbus client tests"
 	@echo "  test_command_codec Build CommandCodec tests"
 	@echo "Individual tests:"
 	@echo "  test_speed       Build Speed class tests"

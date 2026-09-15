@@ -46,7 +46,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.13"
 
       - name: Cache pip packages
         uses: actions/cache@v4
@@ -58,7 +58,7 @@ jobs:
 
       - name: Install ESPHome
         run: |
-          pip install esphome
+          pip install esphome==2026.8.2
 
       - name: Create secrets.yaml
         run: |
@@ -72,6 +72,17 @@ jobs:
           # Fallback AP credentials
           fallback_ap_password: "test1234"
           EOF
+
+      - name: Check action registration and minimum ESPHome version
+        run: python -m unittest discover -s tests/python -v
+
+      - name: Check ServoXXD build warnings
+        run: |
+          esphome compile tests/esphome/test_build_warnings.yaml 2>&1 | tee /tmp/servoxxd-build.log
+          if grep -E "servoxxd/.*warning:|WARNING.*register_action\\('stepper\\.|WARNING.*register_modbus_device" /tmp/servoxxd-build.log; then
+            echo "ServoXXD build warnings detected"
+            exit 1
+          fi
 
       - name: Compile ${{ matrix.yaml-file }}
         run: |

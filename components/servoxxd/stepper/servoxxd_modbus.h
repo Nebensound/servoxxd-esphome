@@ -8,6 +8,7 @@
 #include <functional>
 #include <queue>
 #include <optional>
+#include <span>
 
 namespace esphome {
 namespace servoxxd {
@@ -33,7 +34,7 @@ class ModbusTransport : public ITransport {
    *
    * @param device ESPHome Modbus device instance
    */
-  ModbusTransport(modbus::ModbusDevice *device);
+  ModbusTransport(modbus::ModbusClientDevice *device);
 
   // ITransport interface implementation
   Result execute_command(const Command &cmd) override;
@@ -53,6 +54,9 @@ class ModbusTransport : public ITransport {
    * @param data Response data from Modbus device
    */
   void handle_response(const std::vector<uint8_t> &data);
+
+  void handle_modbus_response(std::span<const uint8_t> request_pdu, std::span<const uint8_t> response_pdu);
+  void handle_modbus_error(std::span<const uint8_t> request_pdu, modbus::ExceptionCode exception_code);
 
   /**
    * @brief Handle Modbus error response (called when motor returns error frame)
@@ -79,7 +83,7 @@ class ModbusTransport : public ITransport {
     WAITING_READ    // Waiting for read command response
   };
 
-  modbus::ModbusDevice *device_;
+  modbus::ModbusClientDevice *device_;
   State state_{State::IDLE};
   std::optional<Command> pending_command_;
   uint32_t timeout_ms_{1000};
@@ -92,6 +96,7 @@ class ModbusTransport : public ITransport {
    * @brief Check for timeout and invoke error callback
    */
   bool check_timeout();
+  bool matches_pending_request_(std::span<const uint8_t> request_pdu) const;
 };
 
 }  // namespace servoxxd

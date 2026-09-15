@@ -3,6 +3,7 @@
 // Mock ESPHome Modbus header for unit testing
 
 #include <cstdint>
+#include <span>
 #include <vector>
 
 namespace esphome {
@@ -11,32 +12,50 @@ namespace modbus {
 // Modbus function codes
 constexpr uint8_t FUNC_PRESET_MULTIPLE_REGISTERS = 0x10;
 
-class ModbusDevice {
+enum class ExceptionCode : uint8_t { ILLEGAL_FUNCTION = 1, ILLEGAL_DATA_ADDRESS = 2 };
+
+class ModbusClientDevice {
  public:
-  virtual ~ModbusDevice() = default;
+  virtual ~ModbusClientDevice() = default;
 
   // Mock methods for unit testing
-  virtual void set_address(uint8_t address) { address_ = address; }
-  virtual uint8_t get_address() const { return address_; }
+  void set_address(uint8_t address) { address_ = address; }
+  uint8_t get_address() const { return address_; }
 
-  // Mock send method (for CommandQueue integration)
-  // Signature matches ESPHome's ModbusDevice: 5 parameters (function, address, count/value, data_len, data)
-  virtual void send(uint8_t function_code, uint16_t start_address, uint16_t count_or_value, uint8_t data_len = 0,
-                    const uint8_t *data = nullptr) {
-    // Mock implementation for testing
-    (void) data_len;
-    (void) data;
+  bool read_input_registers(uint16_t address, uint16_t count) {
+    last_request = {0x04};
+    append_word_(address);
+    append_word_(count);
+    return accept_requests;
+  }
+  bool write_single_register(uint16_t address, uint16_t value) {
+    last_request = {0x06};
+    append_word_(address);
+    append_word_(value);
+    return accept_requests;
+  }
+  bool write_multiple_registers(uint16_t address, std::span<const uint16_t> values) {
+    last_request = {0x10};
+    append_word_(address);
+    append_word_(values.size());
+    last_request.push_back(values.size() * 2);
+    for (auto value : values) {
+      append_word_(value);
+    }
+    return accept_requests && !values.empty();
   }
 
-  virtual void send_raw(const std::vector<uint8_t> &payload) {
-    // Mock implementation for testing
-  }
+  virtual void on_response(std::span<const uint8_t>, std::span<const uint8_t>) {}
+  virtual void on_error(std::span<const uint8_t>, ExceptionCode) {}
 
-  // Virtual modbus callback methods
-  virtual void on_modbus_data(const std::vector<uint8_t> &data) {}
-  virtual void on_modbus_error(uint8_t function_code, uint8_t exception_code) {}
+  bool accept_requests{true};
+  std::vector<uint8_t> last_request;
 
  protected:
+  void append_word_(uint16_t value) {
+    last_request.push_back(value >> 8);
+    last_request.push_back(value & 0xFF);
+  }
   uint8_t address_{0};
 };
 
