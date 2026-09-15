@@ -14,15 +14,20 @@
 #include "servoxxd_speed.h"
 #include "servoxxd_acceleration.h"
 #include "servoxxd_position.h"
-#include "servoxxd_modbus.h"
 #include <optional>
 #include <string>
 
 namespace esphome {
 namespace servoxxd {
 
-// Forward declarations
+// Forward declarations (Layer 2)
 class StepperEngine;
+
+// Forward declarations (Layer 4)
+// Note: ServoXxd is tightly coupled to ModbusTransport because it inherits from
+// ModbusDevice and bridges ESPHome's Modbus callbacks to the transport layer.
+class ModbusTransport;
+enum class Commandtype : uint16_t;
 
 // State enum (defined in servoxxd_stepper_engine.h)
 enum class State;
@@ -480,7 +485,7 @@ class ServoXxd : virtual public Component, public stepper::Stepper, public modbu
    * @brief Initialize the component
    *
    * - Validates configuration (steps_per_rev > 0)
-   * - Creates ModbusTransport and StepperEngine
+   * - Creates ITransport implementation and StepperEngine
    * - Enqueues initial configuration commands
    * - Sets up periodic position synchronization
    */
@@ -846,7 +851,7 @@ class ServoXxd : virtual public Component, public stepper::Stepper, public modbu
   /**
    * @brief Handle Modbus response
    *
-   * Forwards response to ModbusTransport for command completion.
+   * Forwards response to ModbusTransport::handle_response() for command completion.
    */
   void on_modbus_data(const std::vector<uint8_t> &data) override;
 
@@ -894,7 +899,11 @@ class ServoXxd : virtual public Component, public stepper::Stepper, public modbu
 
  private:
   // Core components (4-layer architecture)
-  ModbusTransport *transport_{nullptr};  // Layer 4: Transport abstraction
+  // Note: ServoXxd uses ModbusTransport specifically because it inherits from ModbusDevice.
+  // The ESPHome ModbusDevice callbacks (on_modbus_data, on_modbus_error) are forwarded
+  // to ModbusTransport-specific methods. If Serial transport is added in the future,
+  // a new SerialXxd class would be created that uses SerialTransport*.
+  ModbusTransport *transport_{nullptr};  // Layer 4: Modbus-specific transport
   StepperEngine *engine_{nullptr};       // Layer 2: State machine & movement logic
 
   // Motor configuration (single source of truth)
@@ -931,20 +940,6 @@ class ServoXxd : virtual public Component, public stepper::Stepper, public modbu
   friend class Position;
   friend class StepperEngine;
 };
-
-/**
- * @brief Generate commands to update motor configuration
- * @param current The current configuration
- * @param desired The desired configuration to achieve
- * @param parent Pointer to parent ServoXxd for accessing Speed/Position factories
- * @return Vector of commands to execute, in optimal order
- *
- * Compares current configuration with desired configuration
- * and generates only the commands needed to update differing values.
- * Commands are ordered logically: basic settings first, then homing, then special features.
- */
-std::vector<Command> generate_config_update_commands(const ConfigData &current, const ConfigData &desired,
-                                                     const ServoXxd *parent);
 
 }  // namespace servoxxd
 }  // namespace esphome

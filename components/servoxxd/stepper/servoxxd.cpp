@@ -3,6 +3,7 @@
 #include "servoxxd_stepper_engine.h"
 #include "servoxxd_command_decoder.h"
 #include "servoxxd_commands.h"
+#include "servoxxd_modbus.h"  // Layer 4 implementation (only in .cpp)
 #include <cmath>
 
 namespace esphome {
