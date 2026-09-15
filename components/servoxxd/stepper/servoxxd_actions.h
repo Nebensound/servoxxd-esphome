@@ -7,6 +7,9 @@
 #include "servoxxd_speed.h"
 #include "servoxxd_acceleration.h"
 #include "servoxxd_position.h"
+#include <algorithm>
+#include <cmath>
+#include <optional>
 
 namespace esphome {
 namespace servoxxd {
@@ -100,7 +103,6 @@ template<typename... Ts> class SetTargetAction : public Action<Ts...> {
   TEMPLATABLE_VALUE(float, value)
 
   void set_unit(PositionUnit unit) { unit_ = unit; }
-  void set_target(float target) { this->value_ = target; }
 
   void play(const Ts &...x) override {
     if (parent_->get_operating_mode() != OperatingMode::POSITION) {
@@ -128,25 +130,41 @@ template<typename... Ts> class RunContinuousAction : public Action<Ts...> {
  public:
   explicit RunContinuousAction(ServoXxd *parent) : parent_(parent) {}
 
-  TEMPLATABLE_VALUE(float, value)
+  TEMPLATABLE_VALUE(float, speed)
+  TEMPLATABLE_VALUE(float, acceleration)
 
-  void set_unit(SpeedUnit unit) { unit_ = unit; }
-  void set_speed(float value) { this->value_ = value; }
-  void set_speed_unit(SpeedUnit unit) { this->unit_ = unit; }
+  // Unit setters also mark the corresponding value as configured (codegen always calls them)
+  void set_speed_unit(SpeedUnit unit) {
+    speed_unit_ = unit;
+    has_speed_ = true;
+  }
+  void set_acceleration_unit(AccelerationUnit unit) {
+    acceleration_unit_ = unit;
+    has_acceleration_ = true;
+  }
 
   void play(const Ts &...x) override {
     if (parent_->get_operating_mode() != OperatingMode::SPEED) {
       ESP_LOGE("servoxxd.action", "run_continuous requires mode: SPEED");
       return;
     }
-    float value = this->value_.value(x...);
-    Speed speed(value, unit_, parent_);
-    parent_->run_continuous(speed);
+    std::optional<Speed> speed;
+    if (has_speed_) {
+      speed = Speed(this->speed_.value(x...), speed_unit_, parent_);
+    }
+    std::optional<Acceleration> accel;
+    if (has_acceleration_) {
+      accel = Acceleration(this->acceleration_.value(x...), acceleration_unit_, parent_);
+    }
+    parent_->run_continuous(speed, accel);
   }
 
  protected:
   ServoXxd *parent_;
-  SpeedUnit unit_{SpeedUnit::STEPS_PER_SEC};
+  SpeedUnit speed_unit_{SpeedUnit::STEPS_PER_SEC};
+  AccelerationUnit acceleration_unit_{AccelerationUnit::STEPS_PER_SEC_SQ};
+  bool has_speed_{false};
+  bool has_acceleration_{false};
 };
 
 /**
@@ -160,10 +178,26 @@ template<typename... Ts> class StopAction : public Action<Ts...> {
  public:
   explicit StopAction(ServoXxd *parent) : parent_(parent) {}
 
-  void play(const Ts &...x) override { parent_->stop(); }
+  TEMPLATABLE_VALUE(float, acceleration)
+
+  // Unit setter also marks the deceleration as configured (codegen always calls it)
+  void set_acceleration_unit(AccelerationUnit unit) {
+    acceleration_unit_ = unit;
+    has_acceleration_ = true;
+  }
+
+  void play(const Ts &...x) override {
+    std::optional<Acceleration> decel;
+    if (has_acceleration_) {
+      decel = Acceleration(this->acceleration_.value(x...), acceleration_unit_, parent_);
+    }
+    parent_->stop(decel);
+  }
 
  protected:
   ServoXxd *parent_;
+  AccelerationUnit acceleration_unit_{AccelerationUnit::STEPS_PER_SEC_SQ};
+  bool has_acceleration_{false};
 };
 
 /**
@@ -224,8 +258,6 @@ template<typename... Ts> class ReportPositionAction : public Action<Ts...> {
   TEMPLATABLE_VALUE(float, value)
 
   void set_unit(PositionUnit unit) { unit_ = unit; }
-
-  void set_position(float value) { this->value_ = value; }
 
   void play(const Ts &...x) override {
     if (parent_->get_operating_mode() != OperatingMode::POSITION) {
@@ -416,11 +448,13 @@ template<typename... Ts> class SetHoldingCurrentPercentAction : public Action<Ts
  public:
   explicit SetHoldingCurrentPercentAction(ServoXxd *parent) : parent_(parent) {}
 
-  TEMPLATABLE_VALUE(HoldingCurrentPercent, percent)
+  TEMPLATABLE_VALUE(float, percent)  // 0.0 - 1.0
 
   void play(const Ts &...x) override {
-    HoldingCurrentPercent percent = this->percent_.value(x...);
-    parent_->set_holding_current_percent(percent);
+    // Round to nearest 10 % and clamp to the supported 10-90 % range
+    int pct = static_cast<int>(std::lround(this->percent_.value(x...) * 100.0f));
+    pct = std::max(10, std::min(90, (pct + 5) / 10 * 10));
+    parent_->set_holding_current_percent(static_cast<HoldingCurrentPercent>((pct - 10) / 10));
   }
 
  protected:

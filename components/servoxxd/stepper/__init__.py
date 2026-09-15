@@ -1030,9 +1030,10 @@ async def stepper_set_target_to_code(config, action_id, template_arg, args):
         cg.add(var.set_value(template_))
         cg.add(var.set_unit(POSITION_UNITS[pos_config["unit"]]))
     else:
-        # Plain value in steps
-        template_ = await cg.templatable(pos_config, args, cg.int32)
-        cg.add(var.set_target(template_))
+        # Top-level lambda: value in steps
+        template_ = await cg.templatable(pos_config, args, cg.float_)
+        cg.add(var.set_value(template_))
+        cg.add(var.set_unit(POSITION_UNITS["STEPS"]))
 
     return var
 
@@ -1057,12 +1058,13 @@ async def stepper_report_position_to_code(config, action_id, template_arg, args)
     if isinstance(pos_config, dict):
         # Value with unit - pass both to C++ for runtime conversion
         template_ = await cg.templatable(pos_config["value"], args, cg.float_)
-        cg.add(var.set_position(template_))
+        cg.add(var.set_value(template_))
         cg.add(var.set_unit(POSITION_UNITS[pos_config["unit"]]))
     else:
-        # Plain value in steps
-        template_ = await cg.templatable(pos_config, args, cg.int32)
-        cg.add(var.set_position(template_))
+        # Top-level lambda: value in steps
+        template_ = await cg.templatable(pos_config, args, cg.float_)
+        cg.add(var.set_value(template_))
+        cg.add(var.set_unit(POSITION_UNITS["STEPS"]))
 
     return var
 
@@ -1134,9 +1136,10 @@ async def stepper_run_continuous_to_code(config, action_id, template_arg, args):
             cg.add(var.set_speed(template_))
             cg.add(var.set_speed_unit(SPEED_UNITS[speed_config["unit"]]))
         else:
-            # Plain value
+            # Top-level lambda: value in steps/s
             template_ = await cg.templatable(speed_config, args, cg.float_)
             cg.add(var.set_speed(template_))
+            cg.add(var.set_speed_unit(SPEED_UNITS["STEPS_PER_SEC"]))
 
     # Handle acceleration if provided
     if CONF_ACCELERATION in config:
@@ -1147,9 +1150,10 @@ async def stepper_run_continuous_to_code(config, action_id, template_arg, args):
             cg.add(var.set_acceleration(template_))
             cg.add(var.set_acceleration_unit(ACCELERATION_UNITS[accel_config["unit"]]))
         else:
-            # Plain value
-            template_ = await cg.templatable(accel_config, args, cg.uint16)
+            # Top-level lambda: value in steps/s^2
+            template_ = await cg.templatable(accel_config, args, cg.float_)
             cg.add(var.set_acceleration(template_))
+            cg.add(var.set_acceleration_unit(ACCELERATION_UNITS["STEPS_PER_SEC_SQ"]))
 
     return var
 
@@ -1183,9 +1187,10 @@ async def stepper_stop_to_code(config, action_id, template_arg, args):
             cg.add(var.set_acceleration(template_))
             cg.add(var.set_acceleration_unit(ACCELERATION_UNITS[accel_config["unit"]]))
         else:
-            # Plain value
-            template_ = await cg.templatable(accel_config, args, cg.uint16)
+            # Top-level lambda: value in steps/s^2
+            template_ = await cg.templatable(accel_config, args, cg.float_)
             cg.add(var.set_acceleration(template_))
+            cg.add(var.set_acceleration_unit(ACCELERATION_UNITS["STEPS_PER_SEC_SQ"]))
 
     return var
 
@@ -1328,7 +1333,7 @@ async def stepper_set_working_current_to_code(config, action_id, template_arg, a
     """Change working current at runtime."""
     parent = await cg.get_variable(config[CONF_ID])
     var = cg.new_Pvariable(action_id, template_arg, parent)
-    template_ = await cg.templatable(config[CONF_CURRENT], args, cg.int_)
+    template_ = await cg.templatable(config[CONF_CURRENT], args, cg.uint16)
     cg.add(var.set_current(template_))
     return var
 
@@ -1349,28 +1354,9 @@ async def stepper_set_holding_current_percent_to_code(
     """Change holding current percentage at runtime."""
     parent = await cg.get_variable(config[CONF_ID])
     var = cg.new_Pvariable(action_id, template_arg, parent)
-    # Convert percentage (0.0-1.0) to enum value (10%-90% in 10% steps)
-    # For non-templatable values, convert directly
-    if cg.is_template(config[CONF_PERCENT]):
-        # For templates, we need to generate code that rounds to nearest 10%
-        # This is complex, so for now we just pass the raw template and handle in C++
-        template_ = await cg.templatable(config[CONF_PERCENT], args, cg.float_)
-        # Generate lambda that converts float to enum
-        cg.add(var.set_percent(cg.RawExpression(
-            f"[](float p) {{ "
-            f"uint8_t percent_int = static_cast<uint8_t>(std::round(p * 100.0f)); "
-            f"percent_int = std::max(10, std::min(90, (percent_int + 5) / 10 * 10)); "
-            f"return static_cast<HoldingCurrentPercent>((percent_int - 10) / 10); "
-            f"}}({template_})"
-        )))
-    else:
-        # For static values, convert at compile time
-        holding_percent_float = config[CONF_PERCENT]
-        holding_percent_int = int(round(holding_percent_float * 100))
-        # Round to nearest 10% and clamp to 10-90 range
-        holding_percent_int = max(10, min(90, (holding_percent_int + 5) // 10 * 10))
-        holding_enum = HOLDING_CURRENT_PERCENT_VALUES[holding_percent_int]
-        cg.add(var.set_percent(holding_enum))
+    # Percentage (0.0-1.0) is mapped to the 10-90 % enum (10 % steps) at runtime in C++
+    template_ = await cg.templatable(config[CONF_PERCENT], args, cg.float_)
+    cg.add(var.set_percent(template_))
     return var
 
 

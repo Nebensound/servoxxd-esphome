@@ -84,7 +84,7 @@ button:
 
   # Continuous movement with different speeds (testing units)
   - platform: template
-    name: "Run Continuous - Steps/s"
+    name: "Run Continuous - Steps per s"
     on_press:
       - stepper.run_continuous:
           id: test_stepper
@@ -98,7 +98,7 @@ button:
           speed: 10 RPM
 
   - platform: template
-    name: "Run Continuous - Degrees/s"
+    name: "Run Continuous - Degrees per s"
     on_press:
       - stepper.run_continuous:
           id: test_stepper

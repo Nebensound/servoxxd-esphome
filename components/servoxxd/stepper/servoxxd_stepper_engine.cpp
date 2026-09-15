@@ -552,10 +552,9 @@ void StepperEngine::update() {
   }
 
   // 4. Hardware polling with rate limiting (max every 200ms)
-  static uint32_t last_poll_time = 0;
   uint32_t now = millis();
-  if (now - last_poll_time >= 200) {
-    last_poll_time = now;
+  if (now - last_poll_time_ >= 200) {
+    last_poll_time_ = now;
     poll_hardware();
   }
 }
@@ -1019,6 +1018,8 @@ void StepperEngine::transition_to(State new_state) {
     case State::Idle:
       // Reset target position
       parent_->target_pos_ = parent_->current_pos_;
+      // Reset recovery timer when leaving Error state
+      last_recovery_attempt_time_ = 0;
       break;
 
     case State::Error:
@@ -1026,9 +1027,15 @@ void StepperEngine::transition_to(State new_state) {
       if (queue_) {
         queue_->clear();
       }
+      // Reset recovery timer for fresh start
+      last_recovery_attempt_time_ = 0;
       break;
 
     default:
+      // Reset recovery timer when leaving Error state
+      if (old_state == State::Error) {
+        last_recovery_attempt_time_ = 0;
+      }
       break;
   }
 }
@@ -1094,6 +1101,17 @@ void StepperEngine::check_state_timeouts() {
         ESP_LOGE(TAG_ENGINE, "Stopping timeout after %u ms", state_duration);
         // Force transition to Idle even if not at standstill
         transition_to(State::Idle);
+      }
+      break;
+
+    case State::Error:
+      // Auto-recovery: After ERROR_RECOVERY_DELAY_MS, attempt recovery
+      if (state_duration > ERROR_RECOVERY_DELAY_MS) {
+        uint32_t time_since_last_attempt = now - last_recovery_attempt_time_;
+        // First attempt or interval elapsed since last attempt
+        if (last_recovery_attempt_time_ == 0 || time_since_last_attempt > ERROR_RECOVERY_INTERVAL_MS) {
+          attempt_error_recovery();
+        }
       }
       break;
 
@@ -1164,6 +1182,7 @@ void StepperEngine::process_motor_status_update(CommandDecoder::MotorStatus stat
         Position zero_pos = Position::from_steps(0, parent_);
         parent_->set_current_pos(zero_pos);
         parent_->set_target_pos(zero_pos);
+        homed_ = true;
         transition_to(State::Idle);
       }
       // If Engine is Calibrating and hardware stopped → Calibration completed
@@ -1240,6 +1259,65 @@ bool StepperEngine::is_target_reached() {
   Position tolerance = Position::from_ticks(1.0f, parent_);
   // Use absolute value to check distance in both directions
   return delta.abs() <= tolerance;
+}
+
+void StepperEngine::attempt_error_recovery() {
+  // Only attempt recovery in Error state
+  if (state_ != State::Error) {
+    return;
+  }
+
+  // Update last attempt time
+  last_recovery_attempt_time_ = millis();
+
+  ESP_LOGW(TAG_ENGINE, "Attempting automatic error recovery...");
+
+  // Query motor status to check actual hardware state
+  queue_->enqueue(
+      CommandFactory::read_motor_status(),
+      [this](bool success, const Command &cmd) {
+        if (!success) {
+          ESP_LOGW(TAG_ENGINE, "Recovery: Failed to query motor status - will retry later");
+          return;
+        }
+
+        CommandDecoder::MotorStatus status = CommandDecoder::read_motor_status(cmd);
+
+        // Check if motor is in a recoverable state
+        if (status == CommandDecoder::MotorStatus::STOP || 
+            status == CommandDecoder::MotorStatus::FAIL) {
+          // Motor is stopped or idle - attempt release_protection
+          ESP_LOGI(TAG_ENGINE, "Recovery: Motor status OK (%d) - releasing protection",
+                   static_cast<int>(status));
+          
+          // Clear internal flags and release protection
+          protection_triggered_ = false;
+          emergency_flag_ = false;
+
+          queue_->enqueue(
+              CommandFactory::release_protection(),
+              [this](bool release_success, const Command &) {
+                if (release_success) {
+                  ESP_LOGI(TAG_ENGINE, "Recovery: Protection released - returning to Idle");
+                  transition_to(State::Idle);
+                  // Startup homing never completed (e.g. it failed) - position reference is unknown,
+                  // so re-run homing instead of accepting moves against an unreferenced position
+                  if (!homed_ && parent_->homing_.at_startup && parent_->homing_.mode != HomingMode::NO_HOMING) {
+                    ESP_LOGI(TAG_ENGINE, "Recovery: Startup homing not completed - retrying homing");
+                    this->home();
+                  }
+                } else {
+                  ESP_LOGW(TAG_ENGINE, "Recovery: Failed to release protection - will retry later");
+                }
+              },
+              Priority::SETUP);  // Recovery commands get high priority
+        } else {
+          // Motor is busy (moving, homing, calibrating) - wait for it to finish
+          ESP_LOGW(TAG_ENGINE, "Recovery: Motor busy (status=%d) - waiting for completion",
+                   static_cast<int>(status));
+        }
+      },
+      Priority::SETUP);  // Use SETUP priority - recovery should happen before normal commands
 }
 
 void StepperEngine::handle_error(const char *error_message) {

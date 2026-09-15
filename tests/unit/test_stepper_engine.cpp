@@ -92,9 +92,7 @@ class RealisticMockTransport : public ITransport {
   // Simulated hardware state
   int32_t hw_encoder_ = 0;
   int16_t hw_speed_rpm_ = 0;
-  uint8_t hw_motor_status_ = 0;  // 0=stopped, 1=running
-  uint8_t hw_motor_status_detail_ =
-      0;  // Detailed status: 0=FAIL, 1=STOP, 2=SPEED_UP, 3=SPEED_DOWN, 4=FULL_SPEED, 6=HOMING, 7=CALIBRATING
+  uint8_t hw_motor_status_ = 0;  // READ_MOTOR_STATUS value: 0=FAIL, 1=STOP, 2/3/4=moving, 5=HOMING, 6=CALIBRATING
   uint8_t hw_protection_ = 0;  // 0=ok, >0=error
 
   void set_response_callback(std::function<void(const Command &)> cb) override { response_callback_ = cb; }
@@ -125,10 +123,8 @@ class RealisticMockTransport : public ITransport {
         break;
 
       case Commandtype::READ_MOTOR_STATUS:
-        // 2 bytes: status (1 register = 2 bytes)
-        // Byte 0: detailed status (0=FAIL, 1=STOP, 2=SPEED_UP, 3=SPEED_DOWN, 4=FULL_SPEED, 6=HOMING, 7=CALIBRATING)
-        // Byte 1: enabled (0=disabled, 1=enabled)
-        response_cmd.response = {hw_motor_status_detail_, hw_motor_status_};
+        // 2 bytes (1 register): [reserved 0x00][status] - see CommandDecoder::read_motor_status()
+        response_cmd.response = {0x00, hw_motor_status_};
         break;
 
       case Commandtype::READ_PROTECTION_STATUS:
@@ -474,7 +470,7 @@ void test_08_state_validation(TestStats &stats) {
 
   engine.move_to(target);
   transport.hw_speed_rpm_ = 100;
-  transport.hw_motor_status_ = 1;
+  transport.hw_motor_status_ = 4;  // FULL_SPEED - hardware reports motion (1 would be STOP)
   process_updates(transport, engine);
 
   stats.check(engine.get_state() == State::Moving, "move_to() accepted while Idle");
@@ -500,16 +496,17 @@ void test_09_homing_state_validation(TestStats &stats) {
   // Manually set state to Homing (simulating homing process)
   // In real scenario, home() would trigger this
   engine.set_state(State::Homing);
+  transport.hw_motor_status_ = 5;  // HOMING - otherwise the status poll (STOP) would complete homing
   stats.check(engine.get_state() == State::Homing, "State set to Homing");
 
   // Test 1: move_to() should be REJECTED during Homing
-  Position target = Position::from_steps(1000, nullptr);
+  Position target = Position::from_steps(1000, &parent);
   engine.move_to(target);
   process_updates(transport, engine);
   stats.check(engine.get_state() == State::Homing, "move_to() rejected - state still Homing");
 
   // Test 2: run_continuous() should be REJECTED during Homing
-  Speed run_speed = Speed::from_rpm(100.0f, nullptr);
+  Speed run_speed = Speed::from_rpm(100.0f, &parent);
   engine.run_continuous(run_speed);
   process_updates(transport, engine);
   stats.check(engine.get_state() == State::Homing, "run_continuous() rejected - state still Homing");
@@ -534,7 +531,8 @@ void test_09_homing_state_validation(TestStats &stats) {
   stats.check(engine.get_state() == State::Error, "emergency_stop() accepted - transitioned to Error");
 
   // Test 6: release_protection() should be ALLOWED (even from Error after Homing)
-  transport.hw_protection_ = 0;  // Clear protection
+  transport.hw_protection_ = 0;   // Clear protection
+  transport.hw_motor_status_ = 1;  // STOP - hardware halted after emergency stop
   engine.release_protection();
   process_updates(transport, engine);
   stats.check(engine.get_state() == State::Idle, "release_protection() accepted - recovered to Idle");
@@ -565,13 +563,15 @@ void test_10_motor_status_validation(TestStats &stats) {
   stats.check(engine.get_state() == State::Idle, "Engine back to Idle");
 
   // Test 4: Engine starts movement → Moving state
-  Position target = Position::from_steps(5000, nullptr);
+  Position target = Position::from_steps(5000, &parent);
   engine.move_to(target);
+  transport.hw_motor_status_ = 4;  // FULL_SPEED - hardware reports motion
   process_updates(transport, engine);
   stats.check(engine.get_state() == State::Moving, "Engine in Moving state");
 
   // Test 5: Stop movement → Engine goes to Stopping then Idle
   engine.stop();
+  transport.hw_motor_status_ = 1;  // STOP - hardware halted
   process_updates(transport, engine);
   // After stop(), engine should be in Stopping or already transitioned to Idle
   stats.check(engine.get_state() == State::Stopping || engine.get_state() == State::Idle,
@@ -598,7 +598,7 @@ void test_11_stopping_state_transitions(TestStats &stats) {
   transport.hw_motor_status_ = 1;  // Hardware enabled
   stats.check(engine.get_state() == State::Idle, "Engine in Idle");
 
-  Position target = Position::from_steps(10000, nullptr);
+  Position target = Position::from_steps(10000, &parent);
   engine.move_to(target);
   transport.hw_motor_status_ = 4;  // Hardware at full speed
   process_updates(transport, engine);
@@ -611,7 +611,7 @@ void test_11_stopping_state_transitions(TestStats &stats) {
 
   // Test 2: move_to() accepted during Stopping (target override per spec)
   // Per 02b-layer2-stepper-engine.md: "move_to() require Position Mode + Idle/Moving/Stopping state"
-  Position new_target = Position::from_steps(5000, nullptr);
+  Position new_target = Position::from_steps(5000, &parent);
   engine.move_to(new_target);
   process_updates(transport, engine);
   stats.check(engine.get_state() == State::Moving, "move_to() accepted - state changes to Moving (target override)");
@@ -621,7 +621,7 @@ void test_11_stopping_state_transitions(TestStats &stats) {
   process_updates(transport, engine);
 
   // Test 3: run_continuous() rejected during Stopping (different mode)
-  Speed run_speed = Speed::from_rpm(100, nullptr);
+  Speed run_speed = Speed::from_rpm(100, &parent);
   engine.run_continuous(run_speed);
   process_updates(transport, engine);
   stats.check(engine.get_state() == State::Stopping, "run_continuous() rejected - state still Stopping");
@@ -648,7 +648,7 @@ void test_11_stopping_state_transitions(TestStats &stats) {
   // Test 7: Stopping → Idle when speed reaches 0
   setup_and_wait(transport, engine);
   transport.hw_motor_status_ = 1;
-  engine.move_to(Position::from_steps(8000, nullptr));
+  engine.move_to(Position::from_steps(8000, &parent));
   transport.hw_motor_status_ = 4;
   process_updates(transport, engine);
   engine.stop();
@@ -667,9 +667,8 @@ void test_11_stopping_state_transitions(TestStats &stats) {
   // stats.check(engine.get_state() == State::Idle, "Stopping → Idle when speed reaches 0");
 
   // Test 8: Stopping → Idle when hardware status confirms STOP
-  engine.move_to(Position::from_steps(6000, nullptr));
+  engine.move_to(Position::from_steps(6000, &parent));
   transport.hw_motor_status_ = 4;
-  transport.hw_motor_status_detail_ = 4;
   process_updates(transport, engine);
   engine.stop();
   process_updates(transport, engine);
@@ -677,7 +676,6 @@ void test_11_stopping_state_transitions(TestStats &stats) {
 
   // Simulate hardware confirms STOP by setting values BEFORE polling
   transport.hw_motor_status_ = 1;         // Enabled but stopped
-  transport.hw_motor_status_detail_ = 1;  // STOP
   // Manually trigger motor status polling to get the updated value
   engine.poll_motor_status();
   test_millis_value += 15;
@@ -700,11 +698,12 @@ void test_12_calibrating_state_transitions(TestStats &stats) {
   stats.check(engine.get_state() == State::Idle, "Engine in Idle");
 
   engine.calibrate();
+  transport.hw_motor_status_ = 6;  // CALIBRATING
   process_updates(transport, engine);
   stats.check(engine.get_state() == State::Calibrating, "State transitions to Calibrating after calibrate()");
 
   // Test 2: move_to() rejected during Calibrating
-  engine.move_to(Position::from_steps(1000, nullptr));
+  engine.move_to(Position::from_steps(1000, &parent));
   process_updates(transport, engine);
   stats.check(engine.get_state() == State::Calibrating, "move_to() rejected - state still Calibrating");
 
@@ -720,28 +719,27 @@ void test_12_calibrating_state_transitions(TestStats &stats) {
 
   // Test 5: stop() accepted during Calibrating (transitions to Stopping)
   engine.stop();
+  transport.hw_motor_status_ = 3;  // SPEED_DOWN - hardware decelerating
   process_updates(transport, engine);
   stats.check(engine.get_state() == State::Stopping, "stop() accepted - transitioned to Stopping");
 
-  // Simulate stopping completion
+  // Simulate stopping completion - hardware reports STOP
   transport.hw_speed_rpm_ = 0;
-  transport.hw_motor_status_detail_ = 1;  // STOP
-  engine.poll_motor_speed();
-  engine.poll_motor_status();
-  test_millis_value += 15;
+  transport.hw_motor_status_ = 1;  // STOP
   process_updates(transport, engine);
-  // TODO: Fix Stopping→Idle transition - same issue as Test 11
-  // stats.check(engine.get_state() == State::Idle, "Stopping → Idle after speed reaches 0");
+  stats.check(engine.get_state() == State::Idle, "Stopping → Idle when hardware reports STOP");
 
   // Reset to Calibrating for next test
   setup_and_wait(transport, engine);
   transport.hw_motor_status_ = 1;
   engine.calibrate();
+  transport.hw_motor_status_ = 6;  // CALIBRATING
   process_updates(transport, engine);
   stats.check(engine.get_state() == State::Calibrating, "Engine back in Calibrating");
 
   // Test 6: emergency_stop() transitions to Error
   engine.emergency_stop();
+  transport.hw_motor_status_ = 1;  // STOP - hardware halted
   process_updates(transport, engine);
   stats.check(engine.get_state() == State::Error, "emergency_stop() accepted - transitioned to Error");
 
@@ -753,12 +751,12 @@ void test_12_calibrating_state_transitions(TestStats &stats) {
   setup_and_wait(transport, engine);
   transport.hw_motor_status_ = 1;
   engine.calibrate();
+  transport.hw_motor_status_ = 6;  // CALIBRATING
   process_updates(transport, engine);
   stats.check(engine.get_state() == State::Calibrating, "Engine in Calibrating");
 
   // Simulate calibration completion - hardware reports STOP
-  transport.hw_motor_status_ = 1;         // Enabled
-  transport.hw_motor_status_detail_ = 1;  // STOP (calibration complete)
+  transport.hw_motor_status_ = 1;  // STOP
   engine.poll_motor_status();
   test_millis_value += 15;
   process_updates(transport, engine);
@@ -796,7 +794,7 @@ void test_13_settingup_state(TestStats &stats) {
   stats.check(engine.get_state() == State::SettingUp, "Initial state is SettingUp");
 
   // Test 2: Commands rejected during SettingUp (except emergency_stop/stop/release_protection)
-  engine.move_to(Position::from_steps(1000, nullptr));
+  engine.move_to(Position::from_steps(1000, &parent));
   process_updates(transport, engine);
   printf("  After move_to: state=%d (expected SettingUp=1)\n", static_cast<int>(engine.get_state()));
   stats.check(engine.get_state() == State::SettingUp, "move_to() rejected - state still SettingUp");

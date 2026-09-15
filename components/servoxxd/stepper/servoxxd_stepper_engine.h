@@ -362,7 +362,12 @@ class StepperEngine {
   bool protection_triggered_;  ///< Protection triggered flag
 
   // State timing
-  uint32_t state_enter_time_;  ///< State entry timestamp for timeout tracking
+  uint32_t state_enter_time_;                                    ///< State entry timestamp for timeout tracking
+  uint32_t last_recovery_attempt_time_{0};                       ///< Last recovery attempt timestamp
+  bool homed_{false};                                            ///< Set once a homing sequence completed successfully
+  uint32_t last_poll_time_{0};                                   ///< Last hardware poll (per instance, multi-motor safe)
+  static constexpr uint32_t ERROR_RECOVERY_DELAY_MS = 5000;      ///< Delay before first recovery attempt (5s)
+  static constexpr uint32_t ERROR_RECOVERY_INTERVAL_MS = 10000;  ///< Interval between recovery attempts (10s)
 
   // Buffered commands (for commands that need to be deferred)
   bool disable_pending_;  ///< Disable command buffered (execute after stop)
@@ -396,6 +401,15 @@ class StepperEngine {
    * Transitions to Error state if timeout exceeded.
    */
   void check_state_timeouts();
+
+  /**
+   * @brief Attempt automatic recovery from Error state
+   *
+   * Queries motor status to check if error condition persists.
+   * If motor reports OK, calls release_protection() to return to Idle.
+   * Called automatically after ERROR_RECOVERY_DELAY_MS in Error state.
+   */
+  void attempt_error_recovery();
 
   // ============================================================================
   // Private Methods - Event Processing

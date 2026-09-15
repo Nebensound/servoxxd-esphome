@@ -56,8 +56,9 @@ Result ModbusTransport::execute_command(const Command &cmd) {
           ESP_LOGE(TAG, "0x06 requires exactly 1 register (2 bytes), got %u", (unsigned) padded.size());
           return {false, ErrorCode::PROTOCOL_ERROR};
         }
-        // ESPHome requires rc = 0 for 0x06
-        device_->send(0x06, register_address, 0, 2, padded.data());
+        // number_of_entities must be > 0: newer ESPHome refuses an empty PDU for rc = 0
+        // (value is otherwise ignored for 0x06 - the two payload bytes are the register value)
+        device_->send(0x06, register_address, 1, 2, padded.data());
       } else {
         // 0x10: MUST NOT use rc=0
         device_->send(0x10, register_address, register_count, padded.size(), padded.data());
