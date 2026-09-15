@@ -45,7 +45,7 @@ platformio.ini
 CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake
-Makefile
+# Note: tests/unit/Makefile is tracked (unit test build file)
 *.cmake
 
 # IDE and editor files

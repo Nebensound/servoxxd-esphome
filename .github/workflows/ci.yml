@@ -1,0 +1,134 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  configurations:
+    name: Discover firmware configurations
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.discover.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Discover examples and integration fixtures
+        id: discover
+        run: echo "matrix=$(python tests/configurations.py)" >> "$GITHUB_OUTPUT"
+
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up C++ compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++ make
+
+      - name: Build unit tests
+        run: |
+          cd tests/unit
+          make clean
+          make all
+
+      - name: Run unit tests
+        run: |
+          cd tests/unit
+          make test
+
+  esphome-compile:
+    name: ESPHome Compile Tests
+    needs: configurations
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: ${{ fromJSON(needs.configurations.outputs.matrix) }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install ESPHome
+        run: |
+          pip install esphome==2026.8.2
+
+      - name: Check ServoXXD build warnings
+        if: matrix.yaml-file == 'tests/esphome/test_build_warnings.yaml'
+        shell: bash
+        run: |
+          python tests/local_config.py compile "${{ matrix.yaml-file }}" 2>&1 | tee /tmp/servoxxd-build.log
+          if grep -E "servoxxd/.*warning:|WARNING.*register_action\\('stepper\\.|WARNING.*register_modbus_device" /tmp/servoxxd-build.log; then
+            echo "ServoXXD build warnings detected"
+            exit 1
+          fi
+
+      - name: Compile ${{ matrix.yaml-file }}
+        if: matrix.yaml-file != 'tests/esphome/test_build_warnings.yaml'
+        run: |
+          python tests/local_config.py compile "${{ matrix.yaml-file }}"
+
+  configuration-tests:
+    name: Configuration regression tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install esphome==2026.8.2
+      - run: python -m unittest discover -s tests -p 'test_*.py'
+      - run: python -m unittest discover -s tests/esphome -p 'test_*.py'
+      - run: python -m unittest discover -s tests/python -p 'test_*.py'
+
+  format-check:
+    name: Format Check (C++, Python, YAML)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install formatters
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-format
+          pip install ruff
+          npm install -g prettier
+
+      - name: Check C++ Format
+        run: |
+          clang-format --dry-run --Werror components/servoxxd/stepper/*.cpp components/servoxxd/stepper/*.h tests/unit/test_*.cpp
+
+      - name: Check Python Format
+        run: |
+          ruff format --check components/servoxxd/
+
+      - name: Check YAML Format
+        run: |
+          prettier --check "**/*.{yaml,yml}"

@@ -1,0 +1,387 @@
+esphome:
+  name: servoxxd-test
+  friendly_name: ServoXXD Setup Test
+  on_boot:
+    priority: -100
+    then:
+      - lambda: 'ESP_LOGI("test", "==========================================");'
+      - lambda: 'ESP_LOGI("test", "  SERVO42D HARDWARE FUNCTION TEST");'
+      - lambda: 'ESP_LOGI("test", "==========================================");'
+      - delay: 3s
+
+      # SETUP: Motor should auto-recover from FAIL state during setup
+      - lambda: 'ESP_LOGI("test", "SETUP: Waiting for motor initialization...");'
+      - delay: 6s # Wait for release_protection + restart (4s delay) + configuration
+
+      - lambda: 'ESP_LOGI("test", "  -> Motor state: %s", id(test_motor)->get_state_string());'
+      - lambda: 'ESP_LOGI("test", "  -> Motor position: %d steps", (int)id(test_motor).current_position);'
+      - lambda: 'ESP_LOGI("test", "  SETUP COMPLETE");'
+      - delay: 2s
+
+      # Run main test sequence
+      - script.execute: run_all_tests
+
+# Test Scripts - Each test is separate
+script:
+  # ========================================
+  # TEST 1: Basic Enable/Disable Test
+  # ========================================
+  - id: test_1_enable_disable
+    mode: single
+    then:
+      - lambda: 'ESP_LOGI("test", "==========================================");'
+      - lambda: 'ESP_LOGI("test", "TEST 1: Motor Enable/Disable");'
+      - lambda: 'ESP_LOGI("test", "==========================================");'
+      - delay: 1s
+
+      # Test disable
+      - lambda: 'ESP_LOGI("test", "  -> Disabling motor...");'
+      - stepper.disable: test_motor
+      - wait_until:
+          condition:
+            lambda: "return id(test_motor)->get_state() == esphome::servoxxd::State::Disabled;"
+          timeout: 5s
+      - lambda: 'ESP_LOGI("test", "  -> Motor state: %s", id(test_motor)->get_state_string());'
+      - lambda: 'ESP_LOGI("test", "  -> Motor disabled (shaft should move freely)");'
+      - delay: 2s
+
+      # Test enable
+      - lambda: 'ESP_LOGI("test", "  -> Enabling motor...");'
+      - stepper.enable: test_motor
+      - wait_until:
+          condition:
+            lambda: "return id(test_motor)->get_state() == esphome::servoxxd::State::Idle;"
+          timeout: 5s
+      - lambda: 'ESP_LOGI("test", "  -> Motor state: %s", id(test_motor)->get_state_string());'
+      - lambda: 'ESP_LOGI("test", "  -> Motor enabled (you should feel holding torque)");'
+      - delay: 2s
+
+      - lambda: 'ESP_LOGI("test", "  ✓ TEST 1 PASSED");'
+      - delay: 1s
+
+  # ========================================
+  # TEST 2: Small Movement Test (200 steps)
+  # ========================================
+  - id: test_2_small_movement
+    mode: single
+    then:
+      - lambda: 'ESP_LOGI("test", "==========================================");'
+      - lambda: 'ESP_LOGI("test", "TEST 2: Small Movement (200 steps forward)");'
+      - lambda: 'ESP_LOGI("test", "==========================================");'
+      - delay: 1s
+
+      - lambda: |-
+          int start_pos = (int)id(test_motor).current_position;
+          ESP_LOGI("test", "  -> Start position: %d steps", start_pos);
+      - stepper.set_target:
+          id: test_motor
+          target:
+            value: !lambda |-
+              return 0.25;
+            unit: REVOLUTIONS
+
+      - wait_until:
+          condition:
+            lambda: "return id(test_motor)->get_state() == esphome::servoxxd::State::Moving;"
+          timeout: 2s
+      - lambda: 'ESP_LOGI("test", "  -> Motor state: %s", id(test_motor)->get_state_string());'
+      - wait_until:
+          condition:
+            lambda: "return id(test_motor)->get_state() == esphome::servoxxd::State::Moving;"
+          timeout: 100s
+      - wait_until:
+          condition:
+            lambda: "return id(test_motor)->get_state() == esphome::servoxxd::State::Idle;"
+          timeout: 100s
+
+      - lambda: |-
+          int final_pos = (int)id(test_motor).current_position;
+          ESP_LOGI("test", "  -> Final position: %d steps", final_pos);
+          ESP_LOGI("test", "  -> Motor state: %s", id(test_motor)->get_state_string());
+
+      - lambda: 'ESP_LOGI("test", "  ✓ TEST 2 PASSED");'
+      - delay: 1s
+
+  # ========================================
+  # TEST 3: Move away and Home again
+  # ========================================
+  - id: test_3_move_and_home
+    mode: single
+    then:
+      - lambda: 'ESP_LOGI("test", "==========================================");'
+      - lambda: 'ESP_LOGI("test", "TEST 3: Move Away and Return Home");'
+      - lambda: 'ESP_LOGI("test", "==========================================");'
+      - delay: 1s
+
+      - lambda: 'ESP_LOGI("test", "  -> Moving 1000 steps away from home...");'
+      - stepper.set_target:
+          id: test_motor
+          target: 1000 steps
+
+      - wait_until:
+          condition:
+            lambda: "return id(test_motor)->get_state() == esphome::servoxxd::State::Moving;"
+          timeout: 2s
+      - lambda: 'ESP_LOGI("test", "  -> Motor state: %s", id(test_motor)->get_state_string());'
+      - wait_until:
+          condition:
+            lambda: "return id(test_motor)->get_state() == esphome::servoxxd::State::Idle;"
+          timeout: 15s
+
+      - lambda: |-
+          int pos_after_move = (int)id(test_motor).current_position;
+          ESP_LOGI("test", "  -> Position after move: %d steps", pos_after_move);
+          ESP_LOGI("test", "  -> Motor state: %s", id(test_motor)->get_state_string());
+
+      - delay: 1s
+      - lambda: 'ESP_LOGI("test", "  -> Starting homing sequence again...");'
+      - stepper.home: test_motor
+
+      - wait_until:
+          condition:
+            lambda: "return id(test_motor)->get_state() == esphome::servoxxd::State::Homing;"
+          timeout: 5s
+      - lambda: 'ESP_LOGI("test", "  -> Motor state: %s", id(test_motor)->get_state_string());'
+      - wait_until:
+          condition:
+            lambda: "return id(test_motor)->get_state() == esphome::servoxxd::State::Idle;"
+          timeout: 60s
+
+      - lambda: |-
+          int final_pos = (int)id(test_motor).current_position;
+          ESP_LOGI("test", "  -> Homing completed");
+          ESP_LOGI("test", "  -> Motor state: %s", id(test_motor)->get_state_string());
+          ESP_LOGI("test", "  -> Final position: %d steps (should be 0)", final_pos);
+
+          if (final_pos == 0) {
+            ESP_LOGI("test", "  ✓ TEST 4 PASSED - Successfully returned to home");
+          } else {
+            ESP_LOGW("test", "  ⚠ TEST 4 WARNING - Position is %d, expected 0", final_pos);
+          }
+
+      - delay: 1s
+
+  # ========================================
+  # Main Test Runner - Calls individual tests
+  # ========================================
+  - id: run_all_tests
+    mode: single
+    then:
+      # Run TEST 1 (currently disabled)
+      #- script.execute: test_1_enable_disable
+      #- script.wait: test_1_enable_disable
+
+      # Run TEST 2
+      - script.execute: test_2_small_movement
+      - script.wait: test_2_small_movement
+
+      # Run TEST 3 - Homing
+      # - script.execute: test_3_move_and_home
+      # - script.wait: test_3_move_and_home
+
+      # All tests complete
+      # - delay: 2s
+      # - lambda: 'ESP_LOGI("test", "==========================================");'
+      # - lambda: 'ESP_LOGI("test", "  ALL TESTS COMPLETED!");'
+      # - lambda: 'ESP_LOGI("test", "==========================================");'#
+      # - delay: 5s
+      # - lambda: 'ESP_LOGI("test", "System will restart in 3 seconds...");'
+      - delay: 3s
+      - button.press: restart_esp
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+# Enable logging
+logger:
+  # level: DEBUG
+  logs:
+    # Show UART debug output
+    # uart.idf: DEBUG
+    # uart: DEBUG
+    # Reduce noise from other components
+    wifi: INFO
+    api: INFO
+    mdns: WARN
+    esp-idf: WARN
+    # Reduce spam during tests
+    servoxxd.queue: INFO
+    servoxxd.modbus: INFO
+    sensor: INFO
+    component: WARN
+
+# WiFi
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "Servo42D Setup Test"
+    password: !secret fallback_ap_password
+
+# Enable Home Assistant API
+api:
+
+# Enable OTA updates
+ota:
+  - platform: esphome
+
+# Web server for easy access
+web_server:
+  port: 80
+
+# UART configuration for RS485
+uart:
+  id: rs485_uart
+  tx_pin: GPIO13
+  rx_pin: GPIO16
+  baud_rate: 9600
+  debug:
+    direction: BOTH
+    dummy_receiver: false
+
+# Modbus configuration
+modbus:
+  id: modbus_rs485
+  uart_id: rs485_uart
+  send_wait_time: 50ms
+
+# External component (local path)
+external_components:
+  - source:
+      type: local
+      path: ../../components
+    components: [servoxxd]
+
+# ServoXxD Stepper Motor
+stepper:
+  - platform: servoxxd
+    id: test_motor
+    modbus_id: modbus_rs485
+    address: 0x02
+    servo_type: SERVO42D
+    mode: POSITION
+    speed: 1 revolutions/s
+    acceleration: 100 revolutions/s^2
+    # auto_screen_off: false
+    homing:
+      mode: ENDSTOP
+      at_startup: true # Disable for setup testing
+      direction: CCW # Change to CW if your endstop is in the other direction
+      speed: 2 rpm
+      endstop_trigger: HIGH # Change to HIGH if your endstop triggers on HIGH
+
+# Sensors to monitor status
+sensor:
+  - platform: template
+    name: "Motor Position"
+    lambda: |-
+      return id(test_motor)->get_current_position_steps();
+    update_interval: 1s
+    unit_of_measurement: "steps"
+    accuracy_decimals: 2
+
+  - platform: template
+    name: "Motor Target Position"
+    lambda: |-
+      return id(test_motor)->get_target_position_steps();
+    update_interval: 1s
+    unit_of_measurement: "steps"
+    accuracy_decimals: 2
+
+# Text sensor for motor state
+text_sensor:
+  - platform: template
+    name: "Motor State"
+    lambda: |-
+      static std::string last_state = "";
+      std::string current_state = id(test_motor)->get_state_string();
+      if (current_state != last_state) {
+        last_state = current_state;
+        return current_state;
+      }
+      return {};  // Return empty optional = no update
+    update_interval: 500ms
+  - platform: template
+    name: "Motor Setup State"
+    lambda: |-
+      static std::string last_state = "";
+      std::string current_state = id(test_motor)->get_setup_state_string();
+      if (current_state != last_state) {
+        last_state = current_state;
+        return current_state;
+      }
+      return {};  // Return empty optional = no update
+    update_interval: 500ms
+
+# Simple control buttons
+button:
+  - platform: restart
+    name: "Restart ESP"
+    id: restart_esp
+
+  - platform: template
+    name: "Emergency Stop"
+    on_press:
+      - stepper.emergency_stop: test_motor
+      - lambda: 'ESP_LOGI("test", "EMERGENCY STOP activated!");'
+
+  - platform: template
+    name: "Enable Motor"
+    on_press:
+      - stepper.enable: test_motor
+      - lambda: 'ESP_LOGI("test", "Motor enabled");'
+
+  - platform: template
+    name: "Calibrate Encoder"
+    on_press:
+      - lambda: |-
+          ESP_LOGI("test", "========================================");
+          ESP_LOGI("test", "CALIBRATING ENCODER");
+          ESP_LOGI("test", "Motor will rotate 1-2 full turns");
+          ESP_LOGI("test", "This takes about 30 seconds...");
+          ESP_LOGI("test", "========================================");
+          id(test_motor)->calibrate();
+      - delay: 35s
+      - lambda: |-
+          ESP_LOGI("test", "Calibration should be complete");
+          ESP_LOGI("test", "Motor state: %s", id(test_motor)->get_state_string());
+          ESP_LOGI("test", "If still in Error, check motor connection!");
+
+  - platform: template
+    name: "Release Protection"
+    on_press:
+      - lambda: |-
+          ESP_LOGI("test", "Releasing motor protection state...");
+          id(test_motor)->release_protection();
+      - delay: 2s
+      - lambda: |-
+          ESP_LOGI("test", "Motor state: %s", id(test_motor)->get_state_string());
+
+  # Manual test triggers
+  - platform: template
+    name: "Run Test 1"
+    on_press:
+      - script.execute: test_1_enable_disable
+
+  - platform: template
+    name: "Run Test 2"
+    on_press:
+      - script.execute: test_2_small_movement
+
+  - platform: template
+    name: "Run Test 3 - Homing"
+    on_press:
+      - script.execute: test_3_move_and_home
+
+  - platform: template
+    name: "Manual Home"
+    on_press:
+      - stepper.home: test_motor
+      - lambda: 'ESP_LOGI("test", "Manual homing started...");'
+
+  - platform: template
+    name: "Run All Tests"
+    on_press:
+      - script.execute: run_all_tests

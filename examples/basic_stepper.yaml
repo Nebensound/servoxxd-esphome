@@ -1,4 +1,4 @@
-# Basic Servo42D RS485 Stepper Motor Example
+# Basic ServoXXD RS485 Stepper Motor Example
 #
 # This example shows the minimal configuration needed to control
 # a MKS Servo42D/57D motor via RS485/MODBUS-RTU
@@ -8,26 +8,24 @@
 # - ESP32 UART RX (GPIO16) -> RS485 RO (Receiver Output)
 # - RS485 A/B -> Motor A/B terminals
 # - Motor must be pre-configured via display buttons:
-#   * MODBUS-RTU enabled (register 0x008E = 1)
+#   * Mb_RTU menu option enabled
 #   * Correct baud rate (38400 recommended)
 #   * Motor address (default: 1)
-#   * Work mode set to SR_vFOC (mode 5)
+#   * Work mode set to SR_VFOC (mode 5)
 
 esphome:
-  name: servo42d-basic
-  friendly_name: "Servo42D Basic Example"
+  name: servoxxd-basic
+  friendly_name: "ServoXXD Basic Example"
 
 esp32:
   board: esp32dev
   framework:
     type: arduino
 
-# Load component (adjust path if needed)
+# Load the development branch; select an existing branch/tag for your deployment.
 external_components:
-  - source:
-      type: local
-      path: ../components
-    components: [servo42d_rs485]
+  - source: github://Nebensound/servoxxd-esphome@develop
+    components: [servoxxd]
 
 # Enable logging
 logger:
@@ -51,17 +49,17 @@ modbus:
 
 # Servo42D RS485 Stepper Motor
 stepper:
-  - platform: servo42d_rs485
+  - platform: servoxxd
     id: my_stepper
+    servo_type: SERVO42D
+    control_mode: SR_VFOC
+    microsteps: 1
     max_speed: 1000 steps/s
     acceleration: 500 steps/s^2
-    deceleration: 500 steps/s^2
 
     # MODBUS configuration
     modbus_id: modbus_bus
     address: 0x01
-    # Optional: configure update interval for status polling
-    update_interval: 1s
 
 # =============================================================================
 # Example Buttons using Actions
@@ -72,45 +70,29 @@ button:
   - platform: template
     name: "Enable Motor"
     on_press:
-      - servo42d_rs485.enable_motor:
-          id: my_stepper
-          enable: true
+      - stepper.enable: my_stepper
 
   - platform: template
     name: "Disable Motor"
     on_press:
-      - servo42d_rs485.enable_motor:
-          id: my_stepper
-          enable: false
+      - stepper.disable: my_stepper
 
   # Emergency functions
   - platform: template
     name: "Emergency Stop"
     on_press:
-      - servo42d_rs485.emergency_stop:
-          id: my_stepper
+      - stepper.emergency_stop: my_stepper
 
   - platform: template
     name: "Release Protection"
     on_press:
-      - servo42d_rs485.release_protection:
-          id: my_stepper
+      - stepper.release_protection: my_stepper
 
   # Calibration
   - platform: template
     name: "Calibrate Motor"
     on_press:
-      - servo42d_rs485.calibrate:
-          id: my_stepper
-
-  - platform: template
-    name: "Go to Zero Position"
-    on_press:
-      - servo42d_rs485.go_to_zero:
-          id: my_stepper
-          enable: true
-          speed: 500
-          direction: 0
+      - stepper.calibrate: my_stepper
 
 # =============================================================================
 # Example Script: Motor startup sequence
@@ -120,11 +102,8 @@ script:
   - id: motor_startup
     then:
       - logger.log: "Starting motor initialization..."
-      - servo42d_rs485.enable_motor:
-          id: my_stepper
-          enable: true
+      - stepper.enable: my_stepper
       - delay: 500ms
-      - servo42d_rs485.calibrate:
-          id: my_stepper
+      - stepper.calibrate: my_stepper
       - delay: 2s
-      - logger.log: "Motor ready!"
+      - logger.log: "Calibration requested; check motor state before moving."

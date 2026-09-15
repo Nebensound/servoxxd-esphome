@@ -1,0 +1,260 @@
+---
+# ESP32 hardware compilation test
+# This test compiles the component for actual ESP32 hardware
+# Use this to verify that all hardware-specific features compile correctly
+#
+# Run with: esphome compile tests/esphome/test_compile.yaml
+
+esphome:
+  name: servoxxd-esp32-test
+  friendly_name: "ServoXXD ESP32 Test"
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+# Load component from local directory (for testing)
+external_components:
+  - source:
+      type: local
+      path: ../../components
+    components: [servoxxd]
+
+# Enable logging
+logger:
+  level: DEBUG
+
+# UART for RS485 communication
+uart:
+  id: uart_bus
+  tx_pin: GPIO17
+  rx_pin: GPIO16
+  baud_rate: 38400
+  parity: EVEN
+  stop_bits: 1
+
+# MODBUS-RTU Controller
+modbus:
+  id: modbus_bus
+  uart_id: uart_bus
+  send_wait_time: 50ms # Shorter delay for faster communication
+
+# ServoXxD Modbus Stepper Motor
+stepper:
+  - platform: servoxxd
+    id: test_stepper
+    microsteps: 16
+    speed: 1000 steps/s
+    acceleration: 500 steps/s^2
+    servo_type: SERVO42D
+    mode: POSITION
+    control_mode: SR_CLOSE
+
+    # MODBUS configuration
+    modbus_id: modbus_bus
+    address: 0x01
+
+  # Separate SPEED motor: continuous actions cannot target a POSITION motor.
+  - platform: servoxxd
+    id: speed_stepper
+    servo_type: SERVO42D
+    mode: SPEED
+    control_mode: SR_VFOC
+    microsteps: 1
+    speed: 10 RPM
+    acceleration: 100 RPM/s
+    modbus_id: modbus_bus
+    address: 0x02
+
+# Test Buttons for Actions
+button:
+  # Basic motor control
+  - platform: template
+    name: "Enable Motor"
+    on_press:
+      - stepper.enable: test_stepper
+
+  - platform: template
+    name: "Disable Motor"
+    on_press:
+      - stepper.disable: test_stepper
+  - platform: template
+    name: "Emergency Stop"
+    on_press:
+      - stepper.emergency_stop: test_stepper
+
+  - platform: template
+    name: "Release Protection"
+    on_press:
+      - stepper.release_protection: test_stepper
+
+  # Continuous movement with different speeds (testing units)
+  - platform: template
+    name: "Run Continuous - Steps per s"
+    on_press:
+      - stepper.run_continuous:
+          id: speed_stepper
+          speed: 500 steps/s
+
+  - platform: template
+    name: "Run Continuous - RPM"
+    on_press:
+      - stepper.run_continuous:
+          id: speed_stepper
+          speed: 10 RPM
+
+  - platform: template
+    name: "Run Continuous - Degrees per s"
+    on_press:
+      - stepper.run_continuous:
+          id: speed_stepper
+          speed: 180 degrees/s
+
+  - platform: template
+    name: "Stop Motion"
+    on_press:
+      - stepper.stop: speed_stepper
+
+  # Position control
+  - platform: template
+    name: "Report Position"
+    on_press:
+      - stepper.report_position:
+          id: test_stepper
+          position: 0
+
+  # Configuration actions
+  - platform: template
+    name: "Set Working Current 1500mA"
+    on_press:
+      - stepper.set_working_current:
+          id: test_stepper
+          current: 1500
+
+  - platform: template
+    name: "Set Working Current 2500mA"
+    on_press:
+      - stepper.set_working_current:
+          id: test_stepper
+          current: 2500
+
+  - platform: template
+    name: "Set Holding Current 50%"
+    on_press:
+      - stepper.set_holding_current_percent:
+          id: test_stepper
+          percent: 50%
+
+  - platform: template
+    name: "Set Holding Current 90%"
+    on_press:
+      - stepper.set_holding_current_percent:
+          id: test_stepper
+          percent: 90%
+
+  - platform: template
+    name: "Set Microstepping 16"
+    on_press:
+      - stepper.set_microstepping:
+          id: test_stepper
+          subdivision: 16
+
+  - platform: template
+    name: "Set Microstepping 32"
+    on_press:
+      - stepper.set_microstepping:
+          id: test_stepper
+          subdivision: 32
+
+# Test sensors to verify compilation
+sensor:
+  - platform: template
+    name: "Motor Status Test"
+    lambda: |-
+      return 0;
+    update_interval: 60s
+
+# Test script with multiple actions and different units
+script:
+  - id: test_motor_sequence
+    then:
+      # Enable and configure motor
+      - stepper.enable: test_stepper
+      - delay: 500ms
+
+      # Test position control with steps
+      - stepper.set_target:
+          id: test_stepper
+          target: 1000
+      - delay: 2s
+
+      # Test continuous motion with RPM
+      - stepper.run_continuous:
+          id: speed_stepper
+          speed: 5 RPM
+      - delay: 3s
+
+      # Stop and reset
+      - stepper.stop: speed_stepper
+      - delay: 500ms
+      - stepper.report_position:
+          id: test_stepper
+          position: 0
+
+      # Emergency stop test
+      - stepper.emergency_stop: test_stepper
+      - delay: 1s
+      - stepper.release_protection: test_stepper
+
+      # Disable motor
+      - delay: 500ms
+      - stepper.disable: test_stepper
+
+  # Test script for unit conversions
+  - id: test_unit_conversions
+    then:
+      - stepper.enable: speed_stepper
+      - delay: 500ms
+
+      # Test with steps/s
+      - stepper.run_continuous:
+          id: speed_stepper
+          speed: 500 steps/s
+      - delay: 2s
+      - stepper.stop: speed_stepper
+
+      # Test with RPM
+      - stepper.run_continuous:
+          id: speed_stepper
+          speed: 10 RPM
+      - delay: 2s
+      - stepper.stop: speed_stepper
+
+      # Test with degrees/s
+      - stepper.run_continuous:
+          id: speed_stepper
+          speed: 180 degrees/s
+      - delay: 2s
+      - stepper.stop: speed_stepper
+
+      - stepper.disable: speed_stepper
+
+  # Test configuration changes
+  - id: test_configuration
+    then:
+      # Test current settings
+      - stepper.set_working_current:
+          id: test_stepper
+          current: 2000
+      - delay: 500ms
+
+      - stepper.set_holding_current_percent:
+          id: test_stepper
+          percent: 75%
+
+      # Test microstepping
+      - stepper.set_microstepping:
+          id: test_stepper
+          subdivision: 32
+      - delay: 500ms
