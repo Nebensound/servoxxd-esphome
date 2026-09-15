@@ -17,15 +17,16 @@ release.
 
 ### Documentation and validation cleanup
 
-- Examples use `servoxxd` and the checked-out component, current nested homing
+- Examples use `servoxxd` from GitHub's `develop` branch, current nested homing
   configuration, valid operating modes, and vFOC-compatible microsteps.
 - Home Assistant number controls now send target/speed actions; position sensors
   read the component's reported position.
 - Separate speed-mode example; obsolete/unsupported action and configuration
   fields removed from functional examples.
 - Hardware-manual links point to the included V1.0.5 and V1.0.6 PDFs.
-- CI compiles examples and integration YAMLs individually. Regression checks
-  cover local-component configuration and complete Ruff TOML extraction.
+- CI compiles examples and integration YAMLs individually using temporary copies
+  with local-component overrides. Public examples remain usable without a checkout.
+  Regression checks cover both sources and complete Ruff TOML extraction.
 - Format-config downloads fail explicitly on HTTP errors; empty/invalid Ruff
   documents are rejected before replacing the local configuration.
 

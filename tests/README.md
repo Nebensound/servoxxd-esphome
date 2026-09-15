@@ -25,23 +25,28 @@ empty/invalid downloads without overwriting the existing configuration.
 
 `test_examples.py` validates every YAML in `examples/` and `tests/esphome/` with
 ESPHome, using temporary copies and public placeholder secrets. It also checks
-local component loading, vFOC microstep constraints, action operating modes, and
+the public examples' default GitHub source, temporary local component loading,
+vFOC microstep constraints, action operating modes, and
 ENDSTOP configuration for homing buttons. ESPHome's YAML loader rejects duplicate
 mapping keys. No device credentials or hardware are required.
 
 ## ESPHome compilation
 
-All checked-in configurations load the local `components/servoxxd` implementation,
-not a remote copy. Prepare ignored placeholder secrets for compilation:
+Public `examples/*.yaml` load `github://Nebensound/servoxxd-esphome@develop` and
+require no checkout. Internal `tests/esphome/*.yaml` fixtures use local sources.
+To compile either against the code under review, use the same helper as CI:
 
 ```bash
-cp tests/esphome/secrets.yaml.template tests/esphome/secrets.yaml
-cp examples/secrets.yaml.template examples/secrets.yaml
-esphome compile tests/esphome/test_compile.yaml
+python tests/local_config.py compile examples/basic_stepper.yaml
+python tests/local_config.py compile tests/esphome/test_compile.yaml
 ```
 
-Do not overwrite existing device secrets with these templates. CI compiles each
-configuration separately; shell wildcard expansion is not an ESPHome test matrix.
+The helper creates a temporary copy with public placeholder secrets and overrides
+its component source with the absolute path to this checkout's `components`.
+Committed examples and device secrets are not modified. Temporary files and build
+output are removed when the command exits. Use `config` instead of `compile` for
+configuration-only validation. CI compiles each configuration separately; shell
+wildcard expansion is not an ESPHome test matrix.
 
 | Configuration | Coverage |
 | --- | --- |
@@ -60,6 +65,8 @@ succeeded.
 **Uploading the hardware test causes motor movement on boot.** Check current
 limits, free travel, endstop wiring/polarity, UART pins, and Modbus address first.
 Replace placeholder WiFi credentials and any public example API key before use.
+Create `tests/esphome/secrets.yaml` from its adjacent template if it does not
+already exist; never overwrite existing device credentials.
 
 ```bash
 esphome compile tests/esphome/test_hardware.yaml

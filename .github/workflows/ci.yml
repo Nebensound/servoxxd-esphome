@@ -67,14 +67,9 @@ jobs:
         run: |
           pip install esphome
 
-      - name: Create secrets.yaml
-        run: |
-          cp tests/esphome/secrets.yaml.template tests/esphome/secrets.yaml
-          cp examples/secrets.yaml.template examples/secrets.yaml
-
       - name: Compile ${{ matrix.yaml-file }}
         run: |
-          esphome compile "${{ matrix.yaml-file }}"
+          python tests/local_config.py compile "${{ matrix.yaml-file }}"
 
   configuration-tests:
     name: Configuration regression tests

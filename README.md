@@ -16,7 +16,7 @@ external_components:
 ```
 
 > [!TIP]
-> To use a specific branch or an existing tag, add it after `@`, for example `github://Nebensound/servoxxd-esphome@develop`. The examples in this checkout use the local component so validation covers the code being changed.
+> To use a specific branch or an existing tag, add it after `@`, for example `github://Nebensound/servoxxd-esphome@develop`. Public examples use this GitHub source and require no repository checkout. Tests and CI override only temporary copies to validate the code under review.
 
 > [!WARNING]
 > This component is under development, not a declared stable release. `VIRTUAL` and `SENSORLESS` homing actions are not implemented; use a wired `ENDSTOP` for homing. Position-offset reporting, negative static speed validation, microstepping at 256, and command-queue reliability have outstanding limitations. See [CHANGELOG.md](CHANGELOG.md). Validate wiring, current limits, and travel clearance before running motor actions.

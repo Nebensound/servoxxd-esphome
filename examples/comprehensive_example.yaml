@@ -13,11 +13,9 @@ esp32:
 logger:
   level: DEBUG
 
-# Use the checked-out component; see examples/README.md for standalone use.
+# Load the development branch; select an existing branch/tag for your deployment.
 external_components:
-  - source:
-      type: local
-      path: ../components
+  - source: github://Nebensound/servoxxd-esphome@develop
     components: [servoxxd]
 
 # RS485 Communication

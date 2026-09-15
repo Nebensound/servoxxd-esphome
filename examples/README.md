@@ -2,9 +2,8 @@
 
 This directory contains example configurations for the `servoxxd` ESPHome component.
 
-All examples load `../components` from this checkout, so tests exercise the local
-implementation. Run them from the repository, or replace `external_components`
-when copying a configuration elsewhere:
+All examples load the component from GitHub and can be copied into your ESPHome
+configuration directory without cloning this repository:
 
 ```yaml
 external_components:
@@ -12,8 +11,9 @@ external_components:
     components: [servoxxd]
 ```
 
-Select an existing branch/tag appropriate to your deployment; no stable release is
-implied by these examples. See the [known limitations](../CHANGELOG.md).
+The default `@develop` follows ongoing development. Select an existing branch/tag
+appropriate to your deployment by changing the suffix; no stable release is implied
+by these examples. See the [known limitations](../CHANGELOG.md).
 
 ## Setup
 
@@ -114,7 +114,7 @@ provide a persistent motion offset.
 
 ## Testing Your Setup
 
-1. Use an example in this checkout, or update its component source when copying it
+1. Copy an example into your ESPHome configuration directory; no source change or checkout is needed
 2. Adjust GPIO pins to match your hardware
 3. Create a `secrets.yaml` file for WiFi credentials (advanced examples only)
 4. Compile with: `esphome compile your_config.yaml`
@@ -123,8 +123,10 @@ provide a persistent motion offset.
 
 To validate all examples without uploading, use the Python environment containing
 ESPHome: `python -m unittest discover -s tests -p test_examples.py` from the repository
-root. The test uses temporary copies and public placeholder secrets, never device
-credentials. Configuration/compilation checks do not verify motor behavior.
+root. Tests and CI check the committed GitHub source, then override only temporary
+copies with the current checkout's absolute component path. They use public
+placeholder secrets, never device credentials. Configuration/compilation checks
+do not verify motor behavior.
 
 ## Troubleshooting
 

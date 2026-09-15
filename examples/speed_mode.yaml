@@ -10,9 +10,7 @@ esp32:
     type: arduino
 
 external_components:
-  - source:
-      type: local
-      path: ../components
+  - source: github://Nebensound/servoxxd-esphome@develop
     components: [servoxxd]
 
 logger:
