@@ -729,9 +729,15 @@ CONFIG_SCHEMA = cv.All(
             ),
             cv.Optional(CONF_AUTO_SCREEN_OFF, default="AUTO_OFF"): cv.All(
                 cv.Any(cv.boolean, cv.enum(SCREEN_MODES, upper=True)),
-                lambda value: "AUTO_OFF" if value is True else ("ALWAYS_ON" if value is False else value)
+                lambda value: (
+                    "AUTO_OFF"
+                    if value is True
+                    else ("ALWAYS_ON" if value is False else value)
+                ),
             ),
-            cv.Optional(CONF_LOCK_KEYS_AT_STARTUP, default="UNLOCKED"): cv.enum(KEYPAD_LOCK_VALUES, upper=True),
+            cv.Optional(CONF_LOCK_KEYS_AT_STARTUP, default="UNLOCKED"): cv.enum(
+                KEYPAD_LOCK_VALUES, upper=True
+            ),
             # Operating mode
             cv.Optional(CONF_MODE, default="POSITION"): cv.enum(
                 OPERATING_MODES, upper=True
@@ -766,7 +772,7 @@ def validate_config_cross_fields(config):
                 "vFOC mode does not support microstepping. "
                 "Either set 'microsteps: 1' or switch to OPEN/CLOSE control mode."
             )
-    
+
     # Check for unsupported deceleration field (hardware limitation)
     if "deceleration" in config:
         raise cv.Invalid(
@@ -973,7 +979,7 @@ async def set_acceleration_from_dict(var, accel_dict, microsteps):
     """
     Pass acceleration value and unit to C++ for runtime conversion.
     C++ will handle the conversion based on BASE_STEPS_PER_REVOLUTION and microsteps.
-    
+
     Args:
         var: Component variable
         accel_dict: {"value": float, "unit": "RPM_PER_S"} dictionary
