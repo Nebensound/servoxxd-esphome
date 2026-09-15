@@ -1284,12 +1284,10 @@ void StepperEngine::attempt_error_recovery() {
         CommandDecoder::MotorStatus status = CommandDecoder::read_motor_status(cmd);
 
         // Check if motor is in a recoverable state
-        if (status == CommandDecoder::MotorStatus::STOP || 
-            status == CommandDecoder::MotorStatus::FAIL) {
+        if (status == CommandDecoder::MotorStatus::STOP || status == CommandDecoder::MotorStatus::FAIL) {
           // Motor is stopped or idle - attempt release_protection
-          ESP_LOGI(TAG_ENGINE, "Recovery: Motor status OK (%d) - releasing protection",
-                   static_cast<int>(status));
-          
+          ESP_LOGI(TAG_ENGINE, "Recovery: Motor status OK (%d) - releasing protection", static_cast<int>(status));
+
           // Clear internal flags and release protection
           protection_triggered_ = false;
           emergency_flag_ = false;
@@ -1313,8 +1311,7 @@ void StepperEngine::attempt_error_recovery() {
               Priority::SETUP);  // Recovery commands get high priority
         } else {
           // Motor is busy (moving, homing, calibrating) - wait for it to finish
-          ESP_LOGW(TAG_ENGINE, "Recovery: Motor busy (status=%d) - waiting for completion",
-                   static_cast<int>(status));
+          ESP_LOGW(TAG_ENGINE, "Recovery: Motor busy (status=%d) - waiting for completion", static_cast<int>(status));
         }
       },
       Priority::SETUP);  // Use SETUP priority - recovery should happen before normal commands

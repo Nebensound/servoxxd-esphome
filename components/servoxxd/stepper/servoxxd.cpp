@@ -91,9 +91,7 @@ void ServoXxd::set_acceleration(float accel) {
 // Action-API Methods
 // ============================================================================
 
-void ServoXxd::set_speed(const Speed &speed) {
-  this->default_speed_ = speed;
-}
+void ServoXxd::set_speed(const Speed &speed) { this->default_speed_ = speed; }
 
 void ServoXxd::set_microsteps(uint8_t microsteps) {
   // Validate microstepping value (1-256 per spec)
@@ -119,9 +117,7 @@ void ServoXxd::set_microsteps(uint8_t microsteps) {
   this->engine_->setup_motor();
 }
 
-void ServoXxd::set_acceleration(const Acceleration &accel) {
-  this->default_acceleration_ = accel;
-}
+void ServoXxd::set_acceleration(const Acceleration &accel) { this->default_acceleration_ = accel; }
 
 void ServoXxd::set_zero() {
   // Validate that virtual homing is configured
@@ -130,7 +126,6 @@ void ServoXxd::set_zero() {
              this->homing_.mode == HomingMode::ENDSTOP ? "ENDSTOP" : "SENSORLESS");
     return;
   }
-
 
   // Delegate to StepperEngine - position will be updated via callback after confirmation
   this->engine_->set_zero();
@@ -298,8 +293,7 @@ void ServoXxd::setup() {
   // homing_ is set by YAML setters, config_ is used for hardware comparison
   if (this->homing_.mode == HomingMode::ENDSTOP) {
     this->config_.homing_trigger = this->homing_.endstop_trigger;
-    this->config_.homing_direction =
-        (this->homing_.direction == HomingDirection::CW) ? Direction::CW : Direction::CCW;
+    this->config_.homing_direction = (this->homing_.direction == HomingDirection::CW) ? Direction::CW : Direction::CCW;
     this->config_.homing_speed = this->homing_.speed;
   }
 
