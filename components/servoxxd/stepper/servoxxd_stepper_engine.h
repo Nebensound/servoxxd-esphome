@@ -362,11 +362,11 @@ class StepperEngine {
   bool protection_triggered_;  ///< Protection triggered flag
 
   // State timing
-  uint32_t state_enter_time_;                                    ///< State entry timestamp for timeout tracking
-  uint32_t last_recovery_attempt_time_{0};                       ///< Last recovery attempt timestamp
-  bool homed_{false};                                            ///< Set once a homing sequence completed successfully
-  uint32_t last_poll_time_{0};                                   ///< Last hardware poll (per instance, multi-motor safe)
-  static constexpr uint32_t ERROR_RECOVERY_DELAY_MS = 5000;      ///< Delay before first recovery attempt (5s)
+  uint32_t state_enter_time_;                                ///< State entry timestamp for timeout tracking
+  uint32_t last_recovery_attempt_time_{0};                   ///< Last recovery attempt timestamp
+  bool homed_{false};                                        ///< Set once a homing sequence completed successfully
+  uint32_t last_poll_time_{0};                               ///< Last hardware poll (per instance, multi-motor safe)
+  static constexpr uint32_t ERROR_RECOVERY_DELAY_MS = 5000;  ///< Delay before first recovery attempt (5s)
   static constexpr uint32_t ERROR_RECOVERY_INTERVAL_MS = 10000;  ///< Interval between recovery attempts (10s)
 
   // Buffered commands (for commands that need to be deferred)

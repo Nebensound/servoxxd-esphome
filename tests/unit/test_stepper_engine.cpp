@@ -93,7 +93,7 @@ class RealisticMockTransport : public ITransport {
   int32_t hw_encoder_ = 0;
   int16_t hw_speed_rpm_ = 0;
   uint8_t hw_motor_status_ = 0;  // READ_MOTOR_STATUS value: 0=FAIL, 1=STOP, 2/3/4=moving, 5=HOMING, 6=CALIBRATING
-  uint8_t hw_protection_ = 0;  // 0=ok, >0=error
+  uint8_t hw_protection_ = 0;    // 0=ok, >0=error
 
   void set_response_callback(std::function<void(const Command &)> cb) override { response_callback_ = cb; }
 
@@ -531,7 +531,7 @@ void test_09_homing_state_validation(TestStats &stats) {
   stats.check(engine.get_state() == State::Error, "emergency_stop() accepted - transitioned to Error");
 
   // Test 6: release_protection() should be ALLOWED (even from Error after Homing)
-  transport.hw_protection_ = 0;   // Clear protection
+  transport.hw_protection_ = 0;    // Clear protection
   transport.hw_motor_status_ = 1;  // STOP - hardware halted after emergency stop
   engine.release_protection();
   process_updates(transport, engine);
@@ -675,7 +675,7 @@ void test_11_stopping_state_transitions(TestStats &stats) {
   stats.check(engine.get_state() == State::Stopping, "Engine in Stopping again");
 
   // Simulate hardware confirms STOP by setting values BEFORE polling
-  transport.hw_motor_status_ = 1;         // Enabled but stopped
+  transport.hw_motor_status_ = 1;  // Enabled but stopped
   // Manually trigger motor status polling to get the updated value
   engine.poll_motor_status();
   test_millis_value += 15;
