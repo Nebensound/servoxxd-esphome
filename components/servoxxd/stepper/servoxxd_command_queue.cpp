@@ -30,7 +30,7 @@ void CommandQueue::update() {
   check_timeout();
 
   // Always call execute_next() - it handles:
-  // 1. Pending callbacks waiting for delay_until_ms_
+  // 1. Pending callbacks waiting for the recovery delay
   // 2. Starting next command when idle
   // 3. Early exit if command is executing
   execute_next();
@@ -49,14 +49,14 @@ void CommandQueue::enqueue(const Command &cmd, CommandCallback callback, Priorit
       existing->command.payload = cmd.payload;
       existing->priority = std::min(priority, existing->priority);
       existing->delay_before_next_ms = delay_before_next_ms;
-      existing->callback = callback;
+      if (callback) {
+        existing->callbacks.push_back(std::move(callback));
+      }
       return;
     }
   }
 
-  QueuedCommand queued_cmd(cmd, callback, priority, delay_before_next_ms, millis());
-
-  queue_.push_back(queued_cmd);
+  queue_.emplace_back(cmd, std::move(callback), priority, delay_before_next_ms, millis());
 
   // Try to execute immediately if idle
   execute_next();
@@ -75,29 +75,20 @@ void CommandQueue::on_response(const Command &response_cmd) {
     return;
   }
 
-  // Set delay for next command if specified
-  if (current_cmd.delay_before_next_ms > 0) {
-    delay_until_ms_ = millis() + current_cmd.delay_before_next_ms;
-
-    // Store callback to invoke after delay
-    pending_callback_ = [callback = current_cmd.callback, response_cmd]() {
-      if (callback) {
-        callback(true, response_cmd);
-      }
-    };
-  } else {
-    delay_until_ms_ = 0;
-
-    // Invoke callback immediately if no delay
-    if (current_cmd.callback) {
-      current_cmd.callback(true, response_cmd);
-    }
-  }
-
-  // Remove completed command
+  Command response = response_cmd;
+  auto callbacks = std::move(current_cmd.callbacks);
+  delay_started_ms_ = millis();
+  delay_duration_ms_ = current_cmd.delay_before_next_ms;
   queue_.pop_front();
 
-  // Tail-recursive processing: execute next command
+  if (delay_duration_ms_ > 0) {
+    pending_callback_ = [this, callbacks = std::move(callbacks), response]() mutable {
+      notify_callbacks(std::move(callbacks), true, response);
+    };
+  } else {
+    notify_callbacks(std::move(callbacks), true, response);
+  }
+
   execute_next();
 }
 
@@ -116,29 +107,15 @@ void CommandQueue::on_error(const Command &error_cmd, ErrorCode error) {
 
   ESP_LOGE(TAG, "Command 0x%04X failed: error %d", error_cmd.register_address(), static_cast<int>(error));
 
-  // Check if command has a delay_before_next_ms - respect it even on failure
-  // This is critical for commands like RESTART that need time to complete
-  // even if the motor rejects the command (e.g., 0xFFFF response)
-  bool has_delay = current_cmd.delay_before_next_ms > 0;
-  uint32_t delay_ms = current_cmd.delay_before_next_ms;
-
-  // Invoke callback with failure
-  if (current_cmd.callback) {
-    Command empty_cmd(error_cmd.command_type);
-    current_cmd.callback(false, empty_cmd);
-  }
-
-  // Remove failed command
+  Command empty_cmd(error_cmd.command_type);
+  auto callbacks = std::move(current_cmd.callbacks);
+  // Recovery delays (e.g. RESTART) also apply on transport failure.
+  delay_started_ms_ = millis();
+  delay_duration_ms_ = current_cmd.delay_before_next_ms;
   queue_.pop_front();
 
-  // If command had a delay, respect it even on failure
-  if (has_delay) {
-    delay_until_ms_ = millis() + delay_ms;
-    // execute_next() will be called by update() after delay
-  } else {
-    // Tail-recursive processing: continue with next command immediately
-    execute_next();
-  }
+  notify_callbacks(std::move(callbacks), false, empty_cmd);
+  execute_next();
 }
 
 void CommandQueue::clear() {
@@ -152,46 +129,51 @@ void CommandQueue::clear() {
 
   ESP_LOGW(TAG, "Clearing %zu pending commands", queue_.size() - start_index);
 
-  // Invoke callbacks for all cleared commands
-  for (size_t i = start_index; i < queue_.size(); i++) {
-    if (queue_[i].callback) {
-      Command empty_cmd(queue_[i].command.command_type);
-      queue_[i].callback(false, empty_cmd);
-    }
-  }
-
-  // Remove pending commands (keep executing command if present)
-  // Note: Can't use erase() or resize() because Command has const members
+  // Detach cancellations before invoking user code, which may clear or enqueue again.
+  std::deque<QueuedCommand> cancelled;
   if (start_index > 0) {
-    // Keep only the executing command (first element) - rebuild queue
-    std::deque<QueuedCommand> new_queue;
-    new_queue.push_back(queue_[0]);
-    queue_ = std::move(new_queue);
-  } else {
-    queue_.clear();
+    cancelled.push_back(std::move(queue_.front()));
+    queue_.pop_front();
   }
+  cancelled.swap(queue_);
+
+  bool was_dispatching = dispatching_callbacks_;
+  dispatching_callbacks_ = true;
+  for (auto &cmd : cancelled) {
+    Command empty_cmd(cmd.command.command_type);
+    notify_callbacks(std::move(cmd.callbacks), false, empty_cmd);
+  }
+  dispatching_callbacks_ = was_dispatching;
+  execute_next();
+}
+
+void CommandQueue::notify_callbacks(std::vector<CommandCallback> callbacks, bool success, const Command &cmd) {
+  bool was_dispatching = dispatching_callbacks_;
+  dispatching_callbacks_ = true;
+  for (auto &callback : callbacks) {
+    callback(success, cmd);
+  }
+  dispatching_callbacks_ = was_dispatching;
 }
 
 void CommandQueue::execute_next() {
-  // Early exit: No commands to execute
-  if (queue_.empty()) {
+  if (dispatching_callbacks_ || (!queue_.empty() && queue_.front().state == CommandState::EXECUTING)) {
     return;
   }
 
-  // From spec: "Single-flight guarantee - only one EXECUTING command at a time"
-  if (queue_.front().state == CommandState::EXECUTING) {
-    return;  // Commandtype already executing
+  if (static_cast<uint32_t>(millis() - delay_started_ms_) < delay_duration_ms_) {
+    return;
   }
+  delay_duration_ms_ = 0;
 
-  // Check if we need to delay before executing next command
-  if (delay_until_ms_ > 0 && millis() < delay_until_ms_) {
-    return;  // Still waiting for delay to elapse
-  }
-
-  // Delay elapsed - invoke pending callback if present
   if (pending_callback_) {
-    pending_callback_();
+    auto callback = std::move(pending_callback_);
     pending_callback_ = nullptr;
+    callback();
+  }
+
+  if (queue_.empty()) {
+    return;
   }
 
   // Prepare next command (sorts by effective time with age-based penalties)
@@ -204,7 +186,9 @@ void CommandQueue::execute_next() {
   cmd.sent_time = millis();
 
   // Send via transport - execute_command handles both read (0x04) and write (0x06/0x10)
-  transport_->execute_command(cmd.command);
+  // A synchronous transport callback may remove the queued command.
+  Command command = cmd.command;
+  transport_->execute_command(command);
 }
 
 void CommandQueue::prepare_next_command() {
@@ -214,12 +198,13 @@ void CommandQueue::prepare_next_command() {
 
   uint32_t now = millis();
   auto best = queue_.begin();
-  uint32_t best_effective_time = calculate_effective_time(*best, now);
+  int64_t best_effective_time = calculate_effective_time(*best, now);
 
   // Find command with smallest effective time (executes first)
   for (auto it = queue_.begin() + 1; it != queue_.end(); ++it) {
-    uint32_t effective_time = calculate_effective_time(*it, now);
-    if (effective_time < best_effective_time) {
+    int64_t effective_time = calculate_effective_time(*it, now);
+    bool strict_priority = it->priority < Priority::NORMAL || best->priority < Priority::NORMAL;
+    if (strict_priority ? it->priority < best->priority : effective_time < best_effective_time) {
       best = it;
       best_effective_time = effective_time;
     }
@@ -231,40 +216,35 @@ void CommandQueue::prepare_next_command() {
     auto index = std::distance(queue_.begin(), best);
     std::deque<QueuedCommand> new_queue;
 
-    new_queue.push_back(*best);  // Best command first
+    new_queue.push_back(std::move(*best));  // Best command first
     for (size_t i = 0; i < queue_.size(); ++i) {
       if (i != static_cast<size_t>(index)) {
-        new_queue.push_back(queue_[i]);
+        new_queue.push_back(std::move(queue_[i]));
       }
     }
     queue_ = std::move(new_queue);
 
     // Log if non-FIFO reordering happened
     if (queue_[0].priority == Priority::CRITICAL) {
-      ESP_LOGW(TAG, "Moving CRITICAL command 0x%04X to front (unexpected position)",
-               queue_[0].command.register_address());
-    } else if (queue_[0].priority == Priority::BACKGROUND) {
+      ESP_LOGD(TAG, "Moving CRITICAL command 0x%04X to front", queue_[0].command.register_address());
     }
   }
 }
 
-uint32_t CommandQueue::calculate_effective_time(const QueuedCommand &cmd, [[maybe_unused]] uint32_t now) {
+int64_t CommandQueue::calculate_effective_time(const QueuedCommand &cmd, uint32_t now) {
+  int64_t age = static_cast<uint32_t>(now - cmd.enqueued_time);
   switch (cmd.priority) {
     case Priority::CRITICAL:
-      return 0;  // Always first (smallest value)
-
     case Priority::SETUP:
-      return 1;  // After CRITICAL, before any NORMAL command
-
     case Priority::NORMAL:
-      return cmd.enqueued_time;  // FIFO after SETUP
+      return -age;
 
     case Priority::BACKGROUND:
-      return cmd.enqueued_time + BACKGROUND_PENALTY_MS;
+      return BACKGROUND_PENALTY_MS - age;
 
     case Priority::IDLE:
     default:
-      return cmd.enqueued_time + IDLE_PENALTY_MS;
+      return IDLE_PENALTY_MS - age;
   }
 }
 
@@ -280,16 +260,11 @@ void CommandQueue::check_timeout() {
     ESP_LOGW(TAG, "Command 0x%04X timed out after %ums (timeout=%ums)", current_cmd.command.register_address(), elapsed,
              timeout_ms_);
 
-    // Invoke callback with failure
-    if (current_cmd.callback) {
-      Command empty_cmd(current_cmd.command.command_type);
-      current_cmd.callback(false, empty_cmd);
-    }
-
-    // Remove timed-out command
+    Command empty_cmd(current_cmd.command.command_type);
+    auto callbacks = std::move(current_cmd.callbacks);
     queue_.pop_front();
 
-    // Tail-recursive processing: continue with next command
+    notify_callbacks(std::move(callbacks), false, empty_cmd);
     execute_next();
   }
 }
