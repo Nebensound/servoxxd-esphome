@@ -1,143 +1,71 @@
-# ServoXxd Component Tests
+# ServoXXD Component Tests
 
-This directory contains both **ESPHome integration tests** and **C++ unit tests** for validating the component.
-
-## Directory Structure
-
-```
-tests/
-├── unit/                       # C++ unit tests for type classes
-│   ├── test_speed.cpp         # Speed class with 7 units
-│   ├── test_acceleration.cpp  # Acceleration class with 5 units
-│   ├── test_position.cpp      # Position class with 6 units
-│   ├── Makefile               # Build system for unit tests
-│   └── README.md              # Unit test documentation
-│
-└── esphome/                   # ESPHome YAML integration tests
-    ├── test_compile.yaml      # Full ESP32 compilation test
-    ├── test_compile_host.yaml # Host platform test (no hardware)
-    ├── test_hardware.yaml     # Hardware validation
-    └── hw_setup_test.yaml     # Hardware setup sequence test
-```
-
-## Quick Start
-
-### Run C++ Unit Tests
+## C++ unit tests
 
 ```bash
 cd tests/unit
 make test
 ```
 
-### Run ESPHome Tests
+These cover physical-unit conversions, commands, transport encoding/decoding,
+command queues, the stepper engine, and the public-header boundary.
+See [unit/README.md](unit/README.md).
+
+## Python configuration regression tests
+
+Use Python 3.11 or newer from an environment with ESPHome installed:
 
 ```bash
-# Compile test (no upload)
+python -m unittest discover -s tests -p 'test_*.py'
+```
+
+`test_extract_ruff.py` uses only the standard library. It checks that the format
+sync workflow's extractor retains Ruff assignments and nested tables and rejects
+empty/invalid downloads without overwriting the existing configuration.
+
+`test_examples.py` validates every YAML in `examples/` and `tests/esphome/` with
+ESPHome, using temporary copies and public placeholder secrets. It also checks
+local component loading, vFOC microstep constraints, action operating modes, and
+ENDSTOP configuration for homing buttons. ESPHome's YAML loader rejects duplicate
+mapping keys. No device credentials or hardware are required.
+
+## ESPHome compilation
+
+All checked-in configurations load the local `components/servoxxd` implementation,
+not a remote copy. Prepare ignored placeholder secrets for compilation:
+
+```bash
+cp tests/esphome/secrets.yaml.template tests/esphome/secrets.yaml
+cp examples/secrets.yaml.template examples/secrets.yaml
 esphome compile tests/esphome/test_compile.yaml
-
-# Hardware test (requires ESP32 + motor)
-esphome run tests/esphome/hw_setup_test.yaml
 ```
 
-## Unit Tests (C++)
+Do not overwrite existing device secrets with these templates. CI compiles each
+configuration separately; shell wildcard expansion is not an ESPHome test matrix.
 
-Fast, lightweight tests that verify unit conversion logic for all type classes.
+| Configuration | Coverage |
+| --- | --- |
+| `esphome/test_compile.yaml` | Arduino ESP32; position and separate speed-mode motors/actions |
+| `esphome/test_hardware.yaml` | Arduino ESP32; boot-time motor exercise with ENDSTOP homing |
+| `esphome/test_valve_endstop.yaml` | ESP-IDF; valve positioning, ENDSTOP homing, templated actions |
+| `../examples/*.yaml` | All user examples, including Home Assistant controls and speed mode |
 
-**Advantages:**
-- ⚡ Fast execution (<1 second)
-- 🔧 No hardware required
-- 📊 Comprehensive coverage (18 units total)
-- 🐛 Easy debugging
+The old host/setup-test YAML files are not part of this repository. Compilation
+validates generated C++ and framework integration, not physical motor behavior.
+Hardware tests contain diagnostic logging, not an automated proof that motion
+succeeded.
 
-**See:** [unit/README.md](unit/README.md) for details
+## Hardware exercise
 
-## ESPHome Tests (YAML)
+**Uploading the hardware test causes motor movement on boot.** Check current
+limits, free travel, endstop wiring/polarity, UART pins, and Modbus address first.
+Replace placeholder WiFi credentials and any public example API key before use.
 
-Integration tests that validate the component within ESPHome's build system.
-
-**Setup (for hardware tests):**
-
-1. Copy the secrets template:
-   ```bash
-   cp tests/secrets.yaml.template tests/secrets.yaml
-   ```
-
-2. Edit `tests/secrets.yaml` with your WiFi credentials:
-   ```yaml
-   wifi_ssid: "YourActualWiFiSSID"
-   wifi_password: "YourActualPassword"
-   fallback_ap_password: "test1234"
-   ```
-
-3. The `secrets.yaml` file is in `.gitignore` and will not be committed.
-
-## Test Files
-
-### `hw_setup_test.yaml`
-**Purpose:** Hardware setup validation test (on real hardware)
-
-- Tests actual motor setup sequence (7 steps)
-- Validates UART/RS485 communication
-- Auto-runs on boot and restarts after 15 seconds
-- Requires actual MKS SERVO42D motor connected
-- **Requires secrets.yaml** for WiFi credentials
-
-**Run:** `esphome run tests/hw_setup_test.yaml`
-
-**When to use:**
-- ✅ Testing new hardware setup
-- ✅ Validating RS485 communication
-- ✅ Debugging motor initialization
-- ✅ Verifying encoder and work mode settings
-
-### `test_compile.yaml`
-**Purpose:** Full ESP32 hardware compilation test
-
-- Uses `esp32` platform with Arduino framework
-- Tests hardware-specific features including UART/RS485
-- Validates complete build chain
-- Requires ESP32 toolchain
-
-**Run:** `esphome compile tests/test_compile.yaml`
-
-**When to use:**
-- ✅ Before pushing to production
-- ✅ Testing hardware-specific features
-- ✅ Validating complete build process
-- ✅ Before creating releases
-- ✅ Primary compilation test for this component
-
-### `test_compile_host.yaml`  
-**Status:** Currently not functional
-
-**Note:** The `host` platform doesn't support UART peripherals which are essential for this RS485/MODBUS component. We focus on ESP32 hardware testing instead.
-
-For now, use `test_compile.yaml` for all compilation tests.
-
-## Running Tests
-
-### Primary Test (ESP32 Hardware)
 ```bash
-esphome compile tests/test_compile.yaml
+esphome compile tests/esphome/test_hardware.yaml
+esphome upload tests/esphome/test_hardware.yaml
+timeout 30s esphome logs tests/esphome/test_hardware.yaml
 ```
 
-This is the main test for the component since it requires UART/RS485 functionality.
-
-## CI/CD Integration
-
-For automated testing in CI/CD pipelines, use the host test for speed:
-
-```yaml
-# Example GitHub Actions
-- name: Test ESPHome Component
-  run: |
-    pip install esphome
-    esphome compile tests/test_compile_host.yaml
-```
-
-## Expected Results
-
-Both tests should compile without errors. Warnings are acceptable if they come from ESPHome core or Arduino framework.
-
-**Success:** Component compiles cleanly  
-**Failure:** Check error messages for syntax or dependency issues
+Use separate compile/upload/log commands, not `esphome run`. Inspect the logs and
+actual motor response; a timed wait expiring does not mean an operation succeeded.

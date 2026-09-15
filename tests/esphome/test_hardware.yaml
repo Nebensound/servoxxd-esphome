@@ -1,6 +1,6 @@
 esphome:
-  name: servo42d-test
-  friendly_name: Servo42D Setup Test
+  name: servoxxd-test
+  friendly_name: ServoXXD Setup Test
   on_boot:
     priority: -100
     then:
@@ -13,7 +13,7 @@ esphome:
       - lambda: 'ESP_LOGI("test", "SETUP: Waiting for motor initialization...");'
       - delay: 6s # Wait for release_protection + restart (4s delay) + configuration
 
-      - lambda: 'ESP_LOGI("test", "  -> Motor state: %s", id(test_motor)->get_state_string().c_str());'
+      - lambda: 'ESP_LOGI("test", "  -> Motor state: %s", id(test_motor)->get_state_string());'
       - lambda: 'ESP_LOGI("test", "  -> Motor position: %d steps", (int)id(test_motor).current_position);'
       - lambda: 'ESP_LOGI("test", "  SETUP COMPLETE");'
       - delay: 2s
@@ -41,7 +41,7 @@ script:
           condition:
             lambda: "return id(test_motor)->get_state() == esphome::servoxxd::State::Disabled;"
           timeout: 5s
-      - lambda: 'ESP_LOGI("test", "  -> Motor state: %s", id(test_motor)->get_state_string().c_str());'
+      - lambda: 'ESP_LOGI("test", "  -> Motor state: %s", id(test_motor)->get_state_string());'
       - lambda: 'ESP_LOGI("test", "  -> Motor disabled (shaft should move freely)");'
       - delay: 2s
 
@@ -52,7 +52,7 @@ script:
           condition:
             lambda: "return id(test_motor)->get_state() == esphome::servoxxd::State::Idle;"
           timeout: 5s
-      - lambda: 'ESP_LOGI("test", "  -> Motor state: %s", id(test_motor)->get_state_string().c_str());'
+      - lambda: 'ESP_LOGI("test", "  -> Motor state: %s", id(test_motor)->get_state_string());'
       - lambda: 'ESP_LOGI("test", "  -> Motor enabled (you should feel holding torque)");'
       - delay: 2s
 
@@ -84,7 +84,7 @@ script:
           condition:
             lambda: "return id(test_motor)->get_state() == esphome::servoxxd::State::Moving;"
           timeout: 2s
-      - lambda: 'ESP_LOGI("test", "  -> Motor state: %s", id(test_motor)->get_state_string().c_str());'
+      - lambda: 'ESP_LOGI("test", "  -> Motor state: %s", id(test_motor)->get_state_string());'
       - wait_until:
           condition:
             lambda: "return id(test_motor)->get_state() == esphome::servoxxd::State::Moving;"
@@ -97,7 +97,7 @@ script:
       - lambda: |-
           int final_pos = (int)id(test_motor).current_position;
           ESP_LOGI("test", "  -> Final position: %d steps", final_pos);
-          ESP_LOGI("test", "  -> Motor state: %s", id(test_motor)->get_state_string().c_str());
+          ESP_LOGI("test", "  -> Motor state: %s", id(test_motor)->get_state_string());
 
       - lambda: 'ESP_LOGI("test", "  ✓ TEST 2 PASSED");'
       - delay: 1s
@@ -114,15 +114,15 @@ script:
       - delay: 1s
 
       - lambda: 'ESP_LOGI("test", "  -> Moving 1000 steps away from home...");'
-      - lambda: |-
-          esphome::servoxxd::Position target(1000.0f, esphome::servoxxd::PositionUnit::STEPS, id(test_motor));
-          id(test_motor)->move_to(target);
+      - stepper.set_target:
+          id: test_motor
+          target: 1000 steps
 
       - wait_until:
           condition:
             lambda: "return id(test_motor)->get_state() == esphome::servoxxd::State::Moving;"
           timeout: 2s
-      - lambda: 'ESP_LOGI("test", "  -> Motor state: %s", id(test_motor)->get_state_string().c_str());'
+      - lambda: 'ESP_LOGI("test", "  -> Motor state: %s", id(test_motor)->get_state_string());'
       - wait_until:
           condition:
             lambda: "return id(test_motor)->get_state() == esphome::servoxxd::State::Idle;"
@@ -131,7 +131,7 @@ script:
       - lambda: |-
           int pos_after_move = (int)id(test_motor).current_position;
           ESP_LOGI("test", "  -> Position after move: %d steps", pos_after_move);
-          ESP_LOGI("test", "  -> Motor state: %s", id(test_motor)->get_state_string().c_str());
+          ESP_LOGI("test", "  -> Motor state: %s", id(test_motor)->get_state_string());
 
       - delay: 1s
       - lambda: 'ESP_LOGI("test", "  -> Starting homing sequence again...");'
@@ -141,7 +141,7 @@ script:
           condition:
             lambda: "return id(test_motor)->get_state() == esphome::servoxxd::State::Homing;"
           timeout: 5s
-      - lambda: 'ESP_LOGI("test", "  -> Motor state: %s", id(test_motor)->get_state_string().c_str());'
+      - lambda: 'ESP_LOGI("test", "  -> Motor state: %s", id(test_motor)->get_state_string());'
       - wait_until:
           condition:
             lambda: "return id(test_motor)->get_state() == esphome::servoxxd::State::Idle;"
@@ -150,7 +150,7 @@ script:
       - lambda: |-
           int final_pos = (int)id(test_motor).current_position;
           ESP_LOGI("test", "  -> Homing completed");
-          ESP_LOGI("test", "  -> Motor state: %s", id(test_motor)->get_state_string().c_str());
+          ESP_LOGI("test", "  -> Motor state: %s", id(test_motor)->get_state_string());
           ESP_LOGI("test", "  -> Final position: %d steps (should be 0)", final_pos);
 
           if (final_pos == 0) {
@@ -346,7 +346,7 @@ button:
       - delay: 35s
       - lambda: |-
           ESP_LOGI("test", "Calibration should be complete");
-          ESP_LOGI("test", "Motor state: %s", id(test_motor)->get_state_string().c_str());
+          ESP_LOGI("test", "Motor state: %s", id(test_motor)->get_state_string());
           ESP_LOGI("test", "If still in Error, check motor connection!");
 
   - platform: template
@@ -357,7 +357,7 @@ button:
           id(test_motor)->release_protection();
       - delay: 2s
       - lambda: |-
-          ESP_LOGI("test", "Motor state: %s", id(test_motor)->get_state_string().c_str());
+          ESP_LOGI("test", "Motor state: %s", id(test_motor)->get_state_string());
 
   # Manual test triggers
   - platform: template

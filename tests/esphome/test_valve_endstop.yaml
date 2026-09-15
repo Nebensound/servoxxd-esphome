@@ -1,7 +1,6 @@
 # ESP-IDF compilation test mirroring a real-world valve drive:
 # SERVO42D in POSITION mode, ENDSTOP homing at startup, templated set_target
-# actions with units and an automated action set (stop/run_continuous with
-# acceleration, lambda-based values).
+# actions with units, stop with acceleration, and lambda-based values.
 #
 # Run with: esphome compile tests/esphome/test_valve_endstop.yaml
 

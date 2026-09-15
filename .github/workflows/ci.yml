@@ -37,7 +37,14 @@ jobs:
     strategy:
       matrix:
         yaml-file:
-          - tests/esphome/*.yaml
+          - tests/esphome/test_compile.yaml
+          - tests/esphome/test_hardware.yaml
+          - tests/esphome/test_valve_endstop.yaml
+          - examples/basic_stepper.yaml
+          - examples/advanced_positioning.yaml
+          - examples/comprehensive_example.yaml
+          - examples/multi_motor.yaml
+          - examples/speed_mode.yaml
 
     steps:
       - name: Checkout code
@@ -62,20 +69,23 @@ jobs:
 
       - name: Create secrets.yaml
         run: |
-          cd tests/esphome
-          cat > secrets.yaml << 'EOF'
-          # ESPHome Secrets (CI Generated)
-          # WiFi credentials
-          wifi_ssid: "dummy_ci_ssid"
-          wifi_password: "dummy_ci_password"
-
-          # Fallback AP credentials
-          fallback_ap_password: "test1234"
-          EOF
+          cp tests/esphome/secrets.yaml.template tests/esphome/secrets.yaml
+          cp examples/secrets.yaml.template examples/secrets.yaml
 
       - name: Compile ${{ matrix.yaml-file }}
         run: |
-          esphome compile ${{ matrix.yaml-file }}
+          esphome compile "${{ matrix.yaml-file }}"
+
+  configuration-tests:
+    name: Configuration regression tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install esphome
+      - run: python -m unittest discover -s tests -p 'test_*.py'
 
   format-check:
     name: Format Check (C++, Python, YAML)

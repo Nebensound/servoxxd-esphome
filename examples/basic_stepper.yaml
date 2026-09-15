@@ -1,4 +1,4 @@
-# Basic Servo42D RS485 Stepper Motor Example
+# Basic ServoXXD RS485 Stepper Motor Example
 #
 # This example shows the minimal configuration needed to control
 # a MKS Servo42D/57D motor via RS485/MODBUS-RTU
@@ -8,24 +8,26 @@
 # - ESP32 UART RX (GPIO16) -> RS485 RO (Receiver Output)
 # - RS485 A/B -> Motor A/B terminals
 # - Motor must be pre-configured via display buttons:
-#   * MODBUS-RTU enabled (register 0x008E = 1)
+#   * Mb_RTU menu option enabled
 #   * Correct baud rate (38400 recommended)
 #   * Motor address (default: 1)
 #   * Work mode set to SR_VFOC (mode 5)
 
 esphome:
-  name: servo42d-basic
-  friendly_name: "Servo42D Basic Example"
+  name: servoxxd-basic
+  friendly_name: "ServoXXD Basic Example"
 
 esp32:
   board: esp32dev
   framework:
     type: arduino
 
-# Load component from GitHub
+# Use the checked-out component; see examples/README.md for standalone use.
 external_components:
-  - source: github://Nebensound/servo42d-esphome
-    components: [servo42d_rs485]
+  - source:
+      type: local
+      path: ../components
+    components: [servoxxd]
 
 # Enable logging
 logger:
@@ -49,17 +51,17 @@ modbus:
 
 # Servo42D RS485 Stepper Motor
 stepper:
-  - platform: servo42d_rs485
+  - platform: servoxxd
     id: my_stepper
+    servo_type: SERVO42D
+    control_mode: SR_VFOC
+    microsteps: 1
     max_speed: 1000 steps/s
     acceleration: 500 steps/s^2
-    deceleration: 500 steps/s^2
 
     # MODBUS configuration
     modbus_id: modbus_bus
     address: 0x01
-    # Optional: configure update interval for status polling
-    update_interval: 1s
 
 # =============================================================================
 # Example Buttons using Actions
@@ -106,4 +108,4 @@ script:
       - delay: 500ms
       - stepper.calibrate: my_stepper
       - delay: 2s
-      - logger.log: "Motor ready!"
+      - logger.log: "Calibration requested; check motor state before moving."
