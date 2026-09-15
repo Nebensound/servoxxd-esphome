@@ -10,14 +10,10 @@ import tempfile
 
 from esphome import yaml_util
 
+from configurations import ROOT, configuration_matrix
 
-ROOT = Path(__file__).resolve().parents[1]
-CONFIGS = sorted(
-    path
-    for folder in ("examples", "tests/esphome")
-    for path in (ROOT / folder).glob("*.yaml")
-    if path.name != "secrets.yaml"
-)
+
+CONFIGS = [ROOT / path for path in configuration_matrix()["yaml-file"]]
 
 
 @contextmanager

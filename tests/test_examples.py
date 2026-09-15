@@ -1,6 +1,7 @@
 """Validate every example/integration YAML against the checked-out component."""
 
 from pathlib import Path
+import json
 import re
 import subprocess
 import sys
@@ -13,6 +14,7 @@ from esphome import yaml_util
 from esphome.core import EsphomeError
 
 from local_config import CONFIGS, ROOT, main, prepared_config
+from configurations import configuration_matrix
 
 
 def mappings(value):
@@ -44,8 +46,41 @@ class ExampleTest(unittest.TestCase):
 
     def test_ci_compiles_every_checked_in_configuration(self):
         workflow = yaml_util.load_yaml(ROOT / ".github/workflows/ci.yml")
-        matrix = workflow["jobs"]["esphome-compile"]["strategy"]["matrix"]["yaml-file"]
-        self.assertCountEqual(matrix, [str(path.relative_to(ROOT)) for path in CONFIGS])
+        compile_job = workflow["jobs"]["esphome-compile"]
+        self.assertEqual(compile_job["needs"], "configurations")
+        self.assertEqual(
+            compile_job["strategy"]["matrix"],
+            "${{ fromJSON(needs.configurations.outputs.matrix) }}",
+        )
+        discovery = workflow["jobs"]["configurations"]
+        self.assertEqual(
+            discovery["outputs"]["matrix"], "${{ steps.discover.outputs.matrix }}"
+        )
+        step = next(step for step in discovery["steps"] if step.get("id") == "discover")
+        self.assertEqual(
+            step["run"],
+            'echo "matrix=$(python tests/configurations.py)" >> "$GITHUB_OUTPUT"',
+        )
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "tests/configurations.py")],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        emitted = json.loads(result.stdout)
+        self.assertEqual(set(emitted), {"yaml-file"})
+        self.assertIsInstance(emitted["yaml-file"], list)
+        self.assertTrue(emitted["yaml-file"])
+        expected = [
+            str(path.relative_to(ROOT))
+            for folder in ("examples", "tests/esphome")
+            for path in (ROOT / folder).glob("*.yaml")
+            if path.is_file() and path.name != "secrets.yaml"
+        ]
+        self.assertCountEqual(emitted["yaml-file"], expected)
+        self.assertCountEqual(
+            emitted["yaml-file"], [str(path.relative_to(ROOT)) for path in CONFIGS]
+        )
         compile_step = next(
             step
             for step in workflow["jobs"]["esphome-compile"]["steps"]
@@ -55,6 +90,29 @@ class ExampleTest(unittest.TestCase):
             compile_step["run"].strip(),
             'python tests/local_config.py compile "${{ matrix.yaml-file }}"',
         )
+
+    def test_new_configurations_are_discovered_without_matrix_edits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for folder in ("examples", "tests/esphome"):
+                (root / folder).mkdir(parents=True)
+                (root / folder / "secrets.yaml").write_text("wifi_ssid: placeholder\n")
+            with self.assertRaisesRegex(ValueError, "No example or integration"):
+                configuration_matrix(root)
+            (root / "examples/basic.yaml").touch()
+            self.assertEqual(
+                configuration_matrix(root), {"yaml-file": ["examples/basic.yaml"]}
+            )
+            (root / "tests/esphome/new_fixture.yaml").touch()
+            self.assertEqual(
+                configuration_matrix(root),
+                {
+                    "yaml-file": [
+                        "examples/basic.yaml",
+                        "tests/esphome/new_fixture.yaml",
+                    ],
+                },
+            )
 
     def test_public_examples_default_to_github_without_checkout(self):
         for original in CONFIGS:

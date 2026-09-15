@@ -7,6 +7,20 @@ on:
     branches: [main, develop]
 
 jobs:
+  configurations:
+    name: Discover firmware configurations
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.discover.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Discover examples and integration fixtures
+        id: discover
+        run: echo "matrix=$(python tests/configurations.py)" >> "$GITHUB_OUTPUT"
+
   unit-tests:
     name: Unit Tests
     runs-on: ubuntu-latest
@@ -33,18 +47,10 @@ jobs:
 
   esphome-compile:
     name: ESPHome Compile Tests
+    needs: configurations
     runs-on: ubuntu-latest
     strategy:
-      matrix:
-        yaml-file:
-          - tests/esphome/test_compile.yaml
-          - tests/esphome/test_hardware.yaml
-          - tests/esphome/test_valve_endstop.yaml
-          - examples/basic_stepper.yaml
-          - examples/advanced_positioning.yaml
-          - examples/comprehensive_example.yaml
-          - examples/multi_motor.yaml
-          - examples/speed_mode.yaml
+      matrix: ${{ fromJSON(needs.configurations.outputs.matrix) }}
 
     steps:
       - name: Checkout code

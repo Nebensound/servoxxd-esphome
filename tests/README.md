@@ -46,7 +46,10 @@ its component source with the absolute path to this checkout's `components`.
 Committed examples and device secrets are not modified. Temporary files and build
 output are removed when the command exits. Use `config` instead of `compile` for
 configuration-only validation. CI compiles each configuration separately; shell
-wildcard expansion is not an ESPHome test matrix.
+wildcard expansion is not an ESPHome test matrix. A dependency-free discovery job
+runs `python tests/configurations.py` on the CI checkout and emits the exact
+`{"yaml-file": [...]}` matrix. New example/integration YAML files are automatically
+included; `secrets.yaml` is excluded and an empty matrix is an error.
 
 | Configuration | Coverage |
 | --- | --- |
