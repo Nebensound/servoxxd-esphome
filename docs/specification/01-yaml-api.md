@@ -97,7 +97,7 @@ cv.All(
 
 Static values → Convert to RPM at build-time:
 
-- `STEPS_PER_SEC`: `rpm = (value * 60.0) / steps_per_revolution`
+- `STEPS_PER_SEC`: `rpm = (value * 60.0) / (BASE_STEPS_PER_REVOLUTION * microsteps)`
 - `RPM`: `rpm = value`
 - `REV_PER_SEC`: `rpm = value * 60.0`
 - `DEGREES_PER_SEC`: `rpm = (value * 60.0) / 360.0`
@@ -159,7 +159,7 @@ Lambdas → Pass to C++ for runtime conversion:
 
 Static values → Convert to RPM/s at build-time (clamp to 0-65535):
 
-- `STEPS_PER_SEC_SQ`: `rpm_per_s = (value * 60.0) / steps_per_revolution`
+- `STEPS_PER_SEC_SQ`: `rpm_per_s = (value * 60.0) / (BASE_STEPS_PER_REVOLUTION * microsteps)`
 - `RPM_PER_SEC`: `rpm_per_s = value`
 - `REV_PER_SEC_SQ`: `rpm_per_s = value * 60.0`
 - `DEGREES_PER_SEC_SQ`: `rpm_per_s = (value * 60.0) / 360.0`
@@ -227,11 +227,11 @@ Lambdas → Pass to C++ for runtime conversion:
 Static values → Convert to steps at build-time:
 
 - `STEPS`: `steps = value`
-- `REVOLUTIONS`: `steps = value * steps_per_revolution`
-- `DEGREES`: `steps = (value / 360.0) * steps_per_revolution`
-- `RADIANS`: `steps = (value / (2π)) * steps_per_revolution`
-- `ARCMINUTES`: `steps = (value / 21600.0) * steps_per_revolution` (21600 arcmin = 360°)
-- `ARCSECONDS`: `steps = (value / 1296000.0) * steps_per_revolution` (1296000 arcsec = 360°)
+- `REVOLUTIONS`: `steps = value * BASE_STEPS_PER_REVOLUTION * microsteps`
+- `DEGREES`: `steps = (value / 360.0) * BASE_STEPS_PER_REVOLUTION * microsteps`
+- `RADIANS`: `steps = (value / (2π)) * BASE_STEPS_PER_REVOLUTION * microsteps`
+- `ARCMINUTES`: `steps = (value / 21600.0) * BASE_STEPS_PER_REVOLUTION * microsteps` (21600 arcmin = 360°)
+- `ARCSECONDS`: `steps = (value / 1296000.0) * BASE_STEPS_PER_REVOLUTION * microsteps` (1296000 arcsec = 360°)
 
 Lambdas → Pass to C++ for runtime conversion:
 
@@ -456,7 +456,7 @@ void action(float value, UnitEnum unit = UnitEnum::DEFAULT);
 **References:**
 
 - [`cv.templatable()`](https://github.com/esphome/esphome/blob/dev/esphome/config_validation.py) – Validates static values, passes lambdas unchanged
-- Conversion uses `steps_per_revolution` from component configuration
+- Conversion uses `BASE_STEPS_PER_REVOLUTION` (200.0f) and `microsteps` from component configuration
 
 ## Configuration
 
@@ -521,37 +521,57 @@ stepper:
     address: 0x10  # Decimal 16
 ```
 
-#### `steps_per_revolution`
+#### `microsteps`
 
-Number of steps required for one complete 360° rotation.
+Microstepping subdivision value. Combined with the hardware's base step angle (1.8°, 200 steps/revolution), this determines the effective resolution.
 
-- **Type:** `float`
-- **Required:** ✅ Yes
-- **Validation:** [`cv.positive_float`](https://github.com/esphome/esphome/blob/dev/esphome/config_validation.py)
+- **Type:** `uint16`
+- **Required:** ❌ Optional
+- **Default:** `1`
+- **Range:** `1` to `256`
+- **Validation:** `cv.int_range(min=1, max=256)`
 
-> [!CRITICAL]
-> **This value is ESSENTIAL for all unit conversions!**
+> [!IMPORTANT]
+> **Hardware Compatibility**
 >
-> Used to convert between `steps`, `RPM`, and `degrees` in speed/acceleration/position.
+> ServoXXD motors **only support 1.8° step angle motors** (200 base steps per revolution).
+> 0.9° motors (400 steps/rev) are **not supported** by the hardware.
 >
-> **Calculation:**
+> **Effective Resolution:**
 >
 > ```text
-> steps_per_revolution = base_steps * microsteps
+> effective_steps_per_revolution = 200 * microsteps
 > ```
 >
 > **Examples:**
 >
-> - 1.8° motor (200 steps/rev) with 16 microsteps: `3200`
-> - 0.9° motor (400 steps/rev) with 32 microsteps: `12800`
+> - `microsteps: 1` → 200 steps/rev (full-step mode)
+> - `microsteps: 16` → 3200 steps/rev (typical default)
+> - `microsteps: 256` → 51200 steps/rev (maximum resolution)
+
+> [!WARNING]
+> **Speed Calibration Limitation**
+>
+> Motor speed is factory-calibrated only for microstepping values **16, 32, and 64**.
+>
+> For other values, actual speed may differ from commanded speed. The calibration factor is approximately:
+>
+> ```text
+> actual_rpm ≈ commanded_rpm * (microsteps / 16.0)
+> ```
+
+> [!NOTE]
+> **vFOC Control Mode Restriction**
+>
+> When using `control_mode: SR_VFOC`, only `microsteps: 1` is supported.
+> Other microstepping values will cause validation errors.
 
 **Example:**
 
 ```yaml
 stepper:
   - platform: servoxxd
-    steps_per_revolution: 3200  # 200 * 16
-    microsteps: 16
+    microsteps: 16  # 200 * 16 = 3200 effective steps/rev
 ```
 
 #### `microsteps`
@@ -580,7 +600,7 @@ Microstepping subdivision value.
 ```yaml
 stepper:
   - platform: servoxxd
-    microsteps: 32  # Calibrated value (no correction needed)
+    microsteps: 16  # 200 * 16 = 3200 effective steps/rev
 ```
 
 #### `speed` (alias: `max_speed`)
@@ -918,7 +938,7 @@ stepper:
   - platform: servoxxd
     id: camera_slider
     mode: POSITION
-    steps_per_revolution: 3200
+    microsteps: 16  # 200 * 16 = 3200 effective steps/rev
     initial_speed: 500 steps/s
     initial_acceleration: 200 steps/s²
     homing:
@@ -930,7 +950,7 @@ stepper:
   - platform: servoxxd
     id: conveyor_motor
     mode: SPEED
-    steps_per_revolution: 3200
+    microsteps: 16  # 200 * 16 = 3200 effective steps/rev
     initial_speed: 300 RPM
     initial_acceleration: 100 RPM/s
 ```
@@ -1355,7 +1375,7 @@ on_...:
 
 #### `stepper.set_microstepping`
 
-Change microstepping (step mode) at runtime. `steps_per_revolution` is automatically adjusted accordingly.
+Change microstepping (step mode) at runtime. The effective steps per revolution (BASE_STEPS × microsteps) is automatically updated.
 
 **Configuration:**
 

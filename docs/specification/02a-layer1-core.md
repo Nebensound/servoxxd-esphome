@@ -82,67 +82,96 @@ These overrides bridge ESPHome's standard interfaces to the motor-specific imple
 
 ### Motor Hardware Configuration (ConfigData)
 
-All motor hardware settings are stored in a single `ConfigData` structure, which serves as the single source of truth and matches the hardware READ_ALL_CONFIG format (38 bytes, 19 registers):
+All motor hardware settings are stored in a single `ConfigData` structure, which serves as the single source of truth. The implementation uses **type-safe enum classes** for all hardware settings (better than primitives).
+
+**Architectural Decision:** ConfigData uses modern C++ features:
+- **Enum classes** instead of uint8_t for type safety (ControlMode, EnPinActive, ScreenMode, etc.)
+- **Type-safe wrappers** for units (Speed, Position instead of raw uint16_t)
+- **Required parent pointer** for Speed/Position object construction
+- **Deleted default constructor** to enforce proper initialization
 
 ```cpp
-struct ConfigData
-{
-  // Core motor settings (YAML-configurable)
-  ControlMode mode;                   // SR_OPEN, SR_CLOSE, SR_VFOC (YAML: control_mode)
-  uint8_t holding_current_percent;    // 0-100% (YAML: holding_current_percent)
-  uint16_t working_current_ma;        // mA (YAML: working_current)
-  uint8_t subdivision;                // Microstepping 1-256 (YAML: microsteps)
-  EnPinActive en_pin_active;          // EN_LOW, EN_HIGH, EN_ALWAYS (YAML: en_pin_active)
-  bool shaft_reversed;                // Reverse shaft direction
-  bool auto_screen_off;               // Auto screen off after 15s (YAML: auto_screen_off)
-  bool key_lock;                      // Physical key lock (YAML: lock_keys_at_startup)
+struct ConfigData {
+  ServoXxd *parent;  ///< REQUIRED - no default (for Speed/Position construction)
+
+  // Core motor settings (YAML-configurable with type-safe enums)
+  ControlMode mode{ControlMode::SR_VFOC};                           // Control mode (default: SR_VFOC)
+  HoldingCurrentPercent holding_current_percent{HoldingCurrentPercent::PERCENT_50};  // Holding current (default: 50%)
+  uint16_t working_current_ma{2000};                                // Working current in mA (default: 2000 mA)
+  uint8_t subdivision{16};                                          // Microstepping 1-256 (default: 16)
+  EnPinActive en_pin_active{EnPinActive::EN_LOW};                   // EN pin active level (default: LOW)
+  Direction direction{Direction::CW};                               // Motor shaft direction (default: CW)
+  ScreenMode screen_mode{ScreenMode::AUTO_OFF};                     // Screen power mode (default: auto off)
+  ProtectionMode protection{ProtectionMode::PROTECTION_OFF};        // Stall protection (default: disabled)
+  InterpolationMode interpolation{InterpolationMode::INTERP_256X};  // Interpolation (default: 256x)
+  KeypadLock keypad_lock{KeypadLock::UNLOCKED};                     // Keypad lock (default: unlocked)
   
-  // Homing configuration (subset from YAML homing.*)
-  EndstopTrigger homing_trigger;      // TRIGGER_LOW, TRIGGER_HIGH (YAML: homing.endstop_trigger)
-  Direction homing_direction;         // CW, CCW (YAML: homing.direction → Direction)
-  uint16_t homing_speed_rpm;          // RPM (YAML: homing.speed → converted to RPM)
-  bool endlimit_enable;               // Endstop limit enable
-  uint32_t nolimit_reverse_angle_ticks; // Sensorless reverse angle
-  bool nolimit_mode;                  // Sensorless homing mode
-  uint16_t nolimit_current_ma;        // Sensorless current threshold (YAML: homing.current)
+  // Homing configuration (type-safe objects instead of primitives)
+  EndstopTrigger homing_trigger{EndstopTrigger::TRIGGER_LOW};       // Endstop trigger level
+  Direction homing_direction{Direction::CW};                        // Homing direction
+  Speed homing_speed;                                               // Homing speed (Speed object, not uint16_t)
+  EndstopLimit endstop_limit{EndstopLimit::LIMIT_OFF};              // Endstop limit checking
+  Position nolimit_reverse_angle_ticks;                             // No-limit reverse (Position object, not uint32_t)
+  HomingLimitMode homing_limit_mode{HomingLimitMode::WITH_LIMIT};   // Homing with/without limit
+  uint16_t nolimit_current_ma{1000};                                // No-limit current threshold
+  LimitPortMapping limit_port_mapping{LimitPortMapping::MAPPING_DEFAULT};  // Port mapping
   
   // Zero mode configuration (VIRTUAL homing)
-  ZeroModeMode zero_mode;             // MODE_DISABLED, DIR_MODE, NEAR_MODE
-  ZeroModeTask zero_task;             // CLEAN, SET
-  ZeroingSpeed zero_speed;            // VERY_SLOW..VERY_FAST (YAML: homing.speed as zeroing_speed)
-  Direction zero_direction;           // CW, CCW
-  
-  // Hardware-only settings (not exposed in YAML - use safe defaults)
-  uint8_t protect_enable;             // Protection flags (default: 0 = all disabled)
-  uint8_t mplyer;                     // Multiplier (default: 0)
-  uint8_t baud_rate;                  // Baud rate code (default: 1 = 9600)
-  uint8_t slave_address;              // Modbus address (set via platform, not ConfigData)
-  uint8_t group_address;              // Group address (default: 0)
-  bool respond_enable;                // Response enable (default: true)
-  bool active_enable;                 // Active reporting (default: false)
-  bool modbus_enable;                 // MODBUS protocol (default: true)
-  bool limit_port_remap;              // Limit port remapping (default: false)
+  ZeroModeMode zero_mode{ZeroModeMode::MODE_DISABLED};              // Zero mode
+  ZeroModeTask zero_task{ZeroModeTask::CLEAN};                      // Zero task
+  ZeroingSpeed zero_speed{ZeroingSpeed::MEDIUM};                    // Zero speed
+  Direction zero_direction{Direction::CW};                          // Zero direction
+
+  // Constructor - parent is REQUIRED (no default value)
+  explicit ConfigData(ServoXxd *parent_ptr);
+
+  // Deleted default constructor to enforce parent requirement
+  ConfigData() = delete;
 };
 ```
-
-**Note on ConfigData vs YAML**: Not all fields in ConfigData are directly YAML-configurable. Hardware-only fields use safe defaults to ensure consistent motor behavior after setup.
 
 ### Additional Configuration (not in ConfigData)
 
 ```cpp
-// Unit conversion
-float steps_per_revolution_;          // Required for Speed/Position/Acceleration conversions
+// Hardware constant (not in ConfigData, but fundamental for unit conversions)
+static constexpr float BASE_STEPS_PER_REVOLUTION = 200.0f;  // 1.8° motor (hardware limitation)
 
 // Homing configuration (HomingConfig struct)
-HomingMode homing_mode;               // ENDSTOP, SENSORLESS, VIRTUAL (YAML: homing.mode)
-bool homing_at_startup;               // YAML: homing.at_startup
-// Speed stored as union: Speed (ENDSTOP/SENSORLESS) or ZeroingSpeed (VIRTUAL)
+HomingConfig homing_;                 // Complete homing configuration (mode, direction, speed, etc.)
+
+// Default motion parameters
+Speed default_speed_;                 // Default/max speed for movements (100 RPM)
+Acceleration default_acceleration_;   // Default acceleration (1000 RPM/s)
 
 // Sleep configuration
-uint32_t sleep_when_done_ms;          // UINT32_MAX=disabled, 0=immediate, 1+=delay (YAML: sleep_when_done)
+uint32_t sleep_when_done_ms_;         // UINT32_MAX=disabled, 0=immediate, 1+=delay (YAML: sleep_when_done)
+```
+
+**HomingConfig Structure:**
+```cpp
+struct HomingConfig {
+  HomingMode mode{HomingMode::NO_HOMING};          // NO_HOMING, ENDSTOP, SENSORLESS, VIRTUAL
+  bool at_startup{false};                          // Perform homing at startup
+  HomingDirection direction{HomingDirection::CW};  // CW, CCW, NEAREST
+  
+  // Speed - union (mode determines which is active)
+  union {
+    Speed speed;         // For ENDSTOP/SENSORLESS modes (Speed object)
+    ZeroingSpeed level;  // For VIRTUAL mode (enum: VERY_SLOW..VERY_FAST)
+  };
+  
+  EndstopTrigger endstop_trigger{EndstopTrigger::TRIGGER_LOW};  // For ENDSTOP mode
+  uint16_t current_ma{0};                                       // For SENSORLESS mode (0 = defaults)
+  
+  // Note: Requires proper union management (constructors/destructors)
+};
 ```
 
 ## Runtime State
+
+> **Architectural Decision:** Most runtime state is managed by **Layer 2 (StepperEngine)**, not Layer 1.
+> ServoXxd (Layer 1) is a Facade - it delegates state management to the engine.
+> Only position tracking is kept in Layer 1 for ESPHome base class compatibility.
 
 ```cpp
 // Position tracking (encoder-split representation)
@@ -157,23 +186,24 @@ Position position_offset_;            // Offset for report_position zeroing
 // These must be updated whenever current_pos_ or target_pos_ change to maintain
 // ESPHome stepper API compatibility (used by automations, lambdas, and has_reached_target())
 
-// Motor status
-int16_t motor_speed_rpm;              // Signed, from motor
-uint8_t motor_status;                 // Motor status register (0x3A: 0=disabled, 1=enabled)
-uint8_t protection_status;            // Hardware protection register (0x3E: 0=OK, 1=protected by locked-rotor)
-bool emergency_flag_;                 // Component-level emergency flag (set by emergency_stop(), cleared by release_protection())
-bool motor_auto_disabled;             // sleep_when_done applied
-bool target_synced;                   // Motor has been commanded to current target
+// Operating mode
+OperatingMode operating_mode_;        // Current operating mode (POSITION or SPEED)
+
+// Async setup state tracking
+SetupState setup_state_;              // NOT_STARTED, IN_PROGRESS, COMPLETED, FAILED
+uint32_t setup_start_time_;           // Time when setup_motor() started
 ```
 
-## Last-used Runtime Parameters
+**Motor Status (managed by Layer 2 - StepperEngine):**
+- `State state_` - State machine state (Idle, Moving, Running, Homing, etc.)
+- `Speed current_speed_` - Last known motor speed
+- `bool protection_triggered_` - Protection status
+- `bool emergency_flag_` - Emergency stop flag
 
-(persist across calls)
-
-```cpp
-Speed last_speed;                     // For speed mode single-parameter updates (includes unit)
-Acceleration last_accel;              // Shared accel/decel (includes unit)
-```
+**No "last_speed" / "last_accel" members needed:**
+- Methods accept `std::optional<Speed>` / `std::optional<Acceleration>` parameters
+- StepperEngine tracks defaults internally
+- Cleaner API without persistent state in Layer 1
 
 ## Contracts
 

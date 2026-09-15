@@ -75,24 +75,29 @@ inline void encode_uint32_be(std::vector<uint8_t> &data, uint32_t value) {
  * @return Command object with encoded payload (8 bytes)
  *
  * @details Payload: 8 bytes - [acc_hi][acc_lo][speed_hi][speed_lo][pos_b3][pos_b2][pos_b1][pos_b0]
+ * NOTE: Mode 2 expects Pulses (depends on motor's current microstepping setting)
+ * For microstepping-independent positioning, use move_position_mode_4() instead.
  */
 inline Command move_position_mode_2(const Position &position, const Speed &speed, const Acceleration &accel) {
   std::vector<uint8_t> data;
   data.reserve(8);
   detail::encode_uint16_be(data, static_cast<uint16_t>(accel.acc_internal()));
   detail::encode_uint16_be(data, static_cast<uint16_t>(std::abs(speed.rpm_internal())));
-  detail::encode_int32_be(data, static_cast<int32_t>(position.get_ticks()));
+  // Mode 2 uses pulses - need to convert from our internal ticks to motor's pulses
+  // This requires knowing the motor's actual microstepping setting
+  detail::encode_int32_be(data, static_cast<int32_t>(position.get_steps()));
   return Command(Commandtype::MOVE_POSITION_MODE_2, data);
 }
 
 /**
- * @brief Stop Position Mode 2 with deceleration
+ * @brief Stop Position Mode 3 with deceleration
  * @param decel Deceleration value for controlled stop
  * @return Command object with encoded payload (1 byte)
  *
  * @details Payload: 1 byte - [deceleration]
  */
 inline Command stop_position_mode_2(const Acceleration &decel) {
+  // Use Mode 3 stop command (same register as Mode 2/3 stop)
   return Command(Commandtype::STOP_POSITION_MODE_2, {decel.acc_internal()});
 }
 
@@ -142,10 +147,15 @@ inline Command move_position_mode_3(const Speed &speed, const Acceleration &acce
  * @param absolute_position Target absolute position
  * @return Command object with encoded payload (7 bytes)
  *
- * @details Same payload format as Mode 3
+ * @details Payload: 8 bytes - [acc_hi][acc_lo][speed_hi][speed_lo][axis_b3][axis_b2][axis_b1][axis_b0]
  */
 inline Command move_position_mode_4(const Speed &speed, const Acceleration &accel, const Position &absolute_position) {
-  return move_position_mode_3(speed, accel, absolute_position);  // Same encoding
+  std::vector<uint8_t> data;
+  data.reserve(8);
+  detail::encode_uint16_be(data, accel.acc_internal());
+  detail::encode_uint16_be(data, static_cast<uint16_t>(std::abs(speed.rpm_internal())));
+  detail::encode_int32_be(data, static_cast<int32_t>(absolute_position.get_ticks()));
+  return Command(Commandtype::MOVE_POSITION_MODE_4, data);
 }
 
 // ============================================================================
@@ -205,12 +215,16 @@ inline Command set_working_current(uint16_t mA) {
 
 /**
  * @brief Set microstepping subdivision
- * @param microsteps Microstep resolution (1, 2, 4, 8, 16, 32, 64, etc.)
+ * @param microsteps Microstep resolution (1-256, menu supports: 1,2,4,8,16,32,64,128,256)
  * @return Command object with encoded payload
  *
  * @details Payload: 1 byte - [microsteps]
  */
-inline Command set_subdivision(uint8_t microsteps) { return Command(Commandtype::SET_SUBDIVISION, {microsteps}); }
+inline Command set_subdivision(uint16_t microsteps) {
+  std::vector<uint8_t> data;
+  detail::encode_uint16_be(data, microsteps);
+  return Command(Commandtype::SET_SUBDIVISION, data);
+}
 
 /**
  * @brief Enable or disable motor
@@ -316,37 +330,40 @@ inline Command set_control_mode(ControlMode mode) {
 // ============================================================================
 
 /**
- * @brief Set ENDSTOP homing parameters
+ * @brief Set ENDSTOP homing parameters (0x90)
  * @param trigger Endstop trigger level (LOW or HIGH)
  * @param direction Homing direction (CW or CCW)
  * @param speed Homing speed
  * @param endlimit_enable True to enable endstop limit function
- * @return Command object with encoded payload (5 bytes)
+ * @return Command object with encoded payload (6 bytes, padded for Modbus 0x10)
  *
- * @details Payload: 5 bytes - [hmTrig][hmDir][HmSpeed_hi][HmSpeed_lo][EndLimit]
+ * @details Payload: 6 bytes - [hmTrig][hmDir][HmSpeed_hi][HmSpeed_lo][EndLimit][padding]
+ * Modbus 0x10 requires even byte count (multiples of 2 bytes per register).
+ * Hardware format: 5 bytes content + 1 padding byte = 6 bytes = 3 registers
  */
 inline Command set_homing_parameters(EndstopTrigger trigger, Direction direction, const Speed &speed,
                                      bool endlimit_enable) {
   std::vector<uint8_t> data;
-  data.reserve(5);
+  data.reserve(6);  // 6 bytes = 3 Modbus registers
   detail::encode_uint8(data, static_cast<uint8_t>(trigger));
   detail::encode_uint8(data, static_cast<uint8_t>(direction));
   detail::encode_uint16_be(data, static_cast<uint16_t>(std::abs(speed.rpm_internal())));
   detail::encode_uint8(data, endlimit_enable ? 1 : 0);
+  detail::encode_uint8(data, 0x00);  // Padding byte (prevents Modbus auto-padding at wrong position)
   return Command(Commandtype::SET_HOMING_PARAMETERS, data);
 }
 
 /**
  * @brief Set no-limit (sensorless) homing parameters
- * @param reverse_angle Reverse movement angle after detecting stall (default: 2000 ticks)
+ * @param reverse_angle Reverse movement angle after detecting stall (in ticks, typically 2000)
  * @param sensorless_enabled True to enable sensorless homing mode
  * @param home_current_ma Current threshold for stall detection in mA (default: 100)
  * @return Command object with encoded payload (8 bytes)
  *
  * @details Payload: 8 bytes - [retValue(4)][mode(2)][ma(2)]
  */
-inline Command set_nolimit_homing_params(const Position &reverse_angle = Position::from_ticks(2000),
-                                         bool sensorless_enabled = false, uint16_t home_current_ma = 1000) {
+inline Command set_nolimit_homing_params(const Position &reverse_angle, bool sensorless_enabled = false,
+                                         uint16_t home_current_ma = 1000) {
   std::vector<uint8_t> data;
   data.reserve(8);
   detail::encode_uint32_be(data, reverse_angle.get_ticks());
@@ -367,7 +384,7 @@ inline Command set_endlimit_enable(bool enable) {
 }
 
 /**
- * @brief Start homing sequence
+ * @brief Initiate homing sequence (go home)
  * @return Command object with 2-byte payload (0x0001 = start homing)
  *
  * @details Initiates the homing sequence using previously configured parameters.
@@ -577,7 +594,7 @@ inline Command read_zero_return_status() { return Command(Commandtype::READ_ZERO
  * Note: This is an advanced command. Use individual setters for normal configuration.
  */
 inline Command write_all_config(ControlMode mode, uint8_t holding_current_percent, uint16_t working_current_ma,
-                                uint8_t subdivision, EnPinActive en_pin_active, bool shaft_reversed,
+                                uint16_t subdivision, EnPinActive en_pin_active, bool shaft_reversed,
                                 bool auto_screen_off, uint8_t protect_enable, bool mplyer, uint8_t baud_rate,
                                 uint8_t slave_address, uint8_t group_address, bool respond_enable, bool active_enable,
                                 bool modbus_enable, bool key_lock, EndstopTrigger homing_trigger,

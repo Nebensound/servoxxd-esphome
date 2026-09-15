@@ -27,8 +27,7 @@ stepper:
   - platform: servoxxd
     id: my_stepper
     address: 0x01
-    steps_per_revolution: 3200
-    microsteps: 16
+    microsteps: 1  # 200 base steps × 1 = 200 effective steps/rev
     control_mode: SR_VFOC
     servo_type: SERVO42D
     speed: 1000 steps/s          # or max_speed (alias)
@@ -49,12 +48,23 @@ stepper:
 - **id** (**Required**, [ID](https://esphome.io/guides/configuration-types.html#config-id)): Specify the ID of the stepper so that you can control it.
 - **modbus_id** (*Optional*, [ID](https://esphome.io/guides/configuration-types.html#config-id)): The ID of the Modbus controller. Only needed when you have multiple Modbus controllers.
 - **address** (*Optional*, int): The Modbus device address. Defaults to `0x01`. Range: 1-247.
-- **steps_per_revolution** (**Required**, float): The number of steps for one full rotation. Example: `3200` (200 steps × 16 microsteps).
+- **microsteps** (**Required**, int): Microstepping subdivision (aka step mode). Typical values: `1`=full-step, `2`=half-step, `4`=quarter-step, then `8`, `16`, `32`, … Range `1-256`. Defaults to `1`.
 
-> [!TIP]
-> Set this precisely; wrong values will cause incorrect position and speed calculations.
+> [!IMPORTANT]
+> **Hardware Compatibility**: ServoXXD motors **only support 1.8° step angle motors** (200 base steps per revolution). 0.9° motors (400 steps/rev) are **not supported** by the hardware.
+>
+> The effective resolution is calculated as: `effective_steps_per_revolution = 200 × microsteps`
+>
+> Examples:
+> - `microsteps: 1` → 200 steps/rev (full-step mode)
+> - `microsteps: 16` → 3200 steps/rev (typical default)
+> - `microsteps: 256` → 51200 steps/rev (maximum resolution)
 
-- **microsteps** (*Optional*, int): Microstepping (aka step mode). Typical values: `1`=full, `2`=half, `4`=quarter, then `8`, `16`, `32`, … Range `1-256`. Defaults to `16`.
+> [!WARNING]
+> **Speed Calibration**: Motor speed is factory-calibrated only for microstepping values **16, 32, and 64**. For other values, actual speed may differ from commanded speed.
+
+> [!NOTE]
+> **vFOC Restriction**: When using `control_mode: SR_VFOC`, only `microsteps: 1` is supported due to hardware limitations.
 
 - **servo_type** (**Required**, enum): Motor model used. One of `SERVO28D`, `SERVO35D`, `SERVO42D`, `SERVO57D`. Must match your physical motor.
 - **control_mode** (*Optional*, enum): Motor control mode. One of `SR_OPEN`, `SR_CLOSE`, `SR_VFOC`. Defaults to `SR_VFOC`.
@@ -116,7 +126,7 @@ stepper:
     modbus_id: modbus1
     address: 0x01
     control_mode: SR_VFOC          # Hardware limit: 3000 RPM
-    steps_per_revolution: 3200     # Needed for unit conversion
+    microsteps: 16                 # 200 × 16 = 3200 effective steps/rev
     speed: 600 RPM                 # Target speed (validated against hardware limits)
 ```
 
@@ -137,7 +147,7 @@ stepper:
     modbus_id: modbus1
     address: 0x01
     control_mode: SR_VFOC           # Hardware limit: 3000 RPM
-    steps_per_revolution: 3200
+    microsteps: 16                  # 200 × 16 = 3200 effective steps/rev
     speed: 1000 steps/s             # Target speed (ESPHome compatibility)
     acceleration: 500 steps/s^2     # Optional: acceleration/deceleration rate
 
@@ -465,7 +475,9 @@ on_...:
 
 ## `stepper.set_microstepping`
 
-Change microstepping (step mode) at runtime. `stepper.steps_per_revolution` is automatically adjusted accordingly. So if `stepper.set_target` is used with microstepping `16` to move to position `1600`, after changing microstepping to `32`, the command `stepper.set_target` to position `1600` will move the Stepper to half the angle compared to before.
+Change microstepping (step mode) at runtime. The effective steps per revolution (200 × microsteps) is automatically updated. Position values in steps scale with microstepping changes.
+
+**Example**: With `microsteps: 16`, position `1600 steps` represents a certain angle. After changing to `microsteps: 32`, the same angle would be `3200 steps`. However, if you command `stepper.set_target` to position `1600` after the change, it will move to half the previous angle.
 
 ```yaml
 on_...:
@@ -584,7 +596,7 @@ stepper:
     id: telescope_ra
     address: 0x01
     servo_type: SERVO42D
-    steps_per_revolution: 3200
+    microsteps: 16  # 200 × 16 = 3200 effective steps/rev
     control_mode: SR_VFOC
     mode: POSITION
     
@@ -623,7 +635,7 @@ stepper:
     id: turntable
     address: 0x02
     servo_type: SERVO35D
-    steps_per_revolution: 3200
+    microsteps: 16  # 200 × 16 = 3200 effective steps/rev
     control_mode: SR_VFOC
     mode: SPEED
     
@@ -648,8 +660,7 @@ stepper:
     id: laser_gimbal
     address: 0x03
     servo_type: SERVO28D
-    steps_per_revolution: 6400  # High resolution (32 microsteps)
-    microsteps: 32
+    microsteps: 32  # 200 × 32 = 6400 effective steps/rev (high resolution)
     control_mode: SR_VFOC
     mode: POSITION
     

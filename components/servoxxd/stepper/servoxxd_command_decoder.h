@@ -48,17 +48,18 @@ class CommandDecoder {
    * Response: 2 bytes - [speed_hi][speed_lo] (int16_t RPM)
    *
    * @param cmd Command object with command_type=READ_CURRENT_SPEED and response data
+   * @param parent Parent ServoXxd pointer for speed context (required for steps/sec conversion)
    * @return Speed object with current motor speed in RPM, or default Speed on error
    */
-  static Speed read_current_speed(const Command &cmd) {
+  static Speed read_current_speed(const Command &cmd, const ServoXxd *parent) {
     if (!validate_command_type(cmd, Commandtype::READ_CURRENT_SPEED))
-      return Speed(nullptr);
+      return Speed(parent);
 
     const auto &data = cmd.response;
     if (data.size() < 2)
-      return Speed(nullptr);
+      return Speed(parent);
     int16_t rpm = static_cast<int16_t>((static_cast<int16_t>(data[0]) << 8) | data[1]);
-    return Speed::from_rpm(rpm, nullptr);
+    return Speed::from_rpm(rpm, parent);
   }
 
   /**
@@ -69,18 +70,19 @@ class CommandDecoder {
    * Response: 4 bytes - [count_b3][count_b2][count_b1][count_b0] (int32_t)
    *
    * @param cmd Command object with command_type=READ_PULSE_COUNT and response data
+   * @param parent Parent ServoXxd pointer for position context (required for steps conversion)
    * @return Position object with pulse count in ticks, or default Position on error
    */
-  static Position read_pulse_count(const Command &cmd) {
+  static Position read_pulse_count(const Command &cmd, const ServoXxd *parent) {
     if (!validate_command_type(cmd, Commandtype::READ_PULSE_COUNT))
-      return Position(nullptr);
+      return Position(parent);
 
     const auto &data = cmd.response;
     if (data.size() < 4)
-      return Position(nullptr);
+      return Position(parent);
     int32_t ticks = (static_cast<int32_t>(data[0]) << 24) | (static_cast<int32_t>(data[1]) << 16) |
                     (static_cast<int32_t>(data[2]) << 8) | static_cast<int32_t>(data[3]);
-    return Position::from_ticks(ticks);
+    return Position::from_ticks(ticks, parent);
   }
 
   /**
@@ -91,15 +93,16 @@ class CommandDecoder {
    * Response: 6 bytes - int48_t position (signed)
    *
    * @param cmd Command object with command_type=READ_ENCODER_ADDITION and response data
+   * @param parent Parent ServoXxd pointer for position context (required for steps conversion)
    * @return Position object with encoder position in ticks (int48_t), or default Position on error
    */
-  static Position read_encoder_addition(const Command &cmd) {
+  static Position read_encoder_addition(const Command &cmd, const ServoXxd *parent) {
     if (!validate_command_type(cmd, Commandtype::READ_ENCODER_ADDITION))
-      return Position(nullptr);
+      return Position(parent);
 
     const auto &data = cmd.response;
     if (data.size() < 6)
-      return Position(nullptr);
+      return Position(parent);
     int64_t ticks = 0;
     for (size_t i = 0; i < 6; i++) {
       ticks = (ticks << 8) | data[i];
@@ -107,7 +110,7 @@ class CommandDecoder {
     if (ticks & 0x800000000000LL) {
       ticks |= 0xFFFF000000000000LL;
     }
-    return Position::from_ticks(ticks);
+    return Position::from_ticks(ticks, parent);
   }
 
   /**
@@ -118,18 +121,19 @@ class CommandDecoder {
    * Response: Same format as pulse count (4 bytes)
    *
    * @param cmd Command object with command_type=READ_ANGLE_ERROR and response data
+   * @param parent Parent ServoXxd pointer for position context (required for steps conversion)
    * @return Position object with angle error in ticks, or default Position on error
    */
-  static Position read_angle_error(const Command &cmd) {
+  static Position read_angle_error(const Command &cmd, const ServoXxd *parent) {
     if (!validate_command_type(cmd, Commandtype::READ_ANGLE_ERROR))
-      return Position(nullptr);
+      return Position(parent);
 
     const auto &data = cmd.response;
     if (data.size() < 4)
-      return Position(nullptr);
+      return Position(parent);
     int32_t ticks = (static_cast<int32_t>(data[0]) << 24) | (static_cast<int32_t>(data[1]) << 16) |
                     (static_cast<int32_t>(data[2]) << 8) | static_cast<int32_t>(data[3]);
-    return Position::from_ticks(ticks);
+    return Position::from_ticks(ticks, parent);
   }
 
   /**
@@ -206,56 +210,6 @@ class CommandDecoder {
     return zs;
   }
 
-  struct DetailedMotorStatus {
-    enum State { FAIL = 0, STOP = 1, SPEED_UP = 2, SPEED_DOWN = 3, FULL_SPEED = 4, HOMING = 5, CALIBRATING = 6 };
-    State state{FAIL};
-  };
-
-  /**
-   * @brief Decode detailed motor status
-   *
-   * @details Commandtype::READ_DETAILED_STATUS (0x35)
-   * Function: 0x04 (Read Input Registers)
-   * Response: 2 bytes - [0x00][status] (0=FAIL, 1=STOP, 2=SPEED_UP, 3=SPEED_DOWN, 4=FULL_SPEED, 5=HOMING,
-   * 6=CALIBRATING)
-   *
-   * @param data Response data vector (2 bytes minimum)
-   * @return DetailedMotorStatus struct with state (FAIL, STOP, SPEED_UP, SPEED_DOWN, FULL_SPEED, HOMING, or
-   * CALIBRATING)
-   */
-  static DetailedMotorStatus read_detailed_motor_status(const std::vector<uint8_t> &data) {
-    DetailedMotorStatus dms{};
-    if (data.size() >= 2) {
-      uint8_t status = data[1];
-      switch (status) {
-        case 0:
-          dms.state = DetailedMotorStatus::FAIL;
-          break;
-        case 1:
-          dms.state = DetailedMotorStatus::STOP;
-          break;
-        case 2:
-          dms.state = DetailedMotorStatus::SPEED_UP;
-          break;
-        case 3:
-          dms.state = DetailedMotorStatus::SPEED_DOWN;
-          break;
-        case 4:
-          dms.state = DetailedMotorStatus::FULL_SPEED;
-          break;
-        case 5:
-          dms.state = DetailedMotorStatus::HOMING;
-          break;
-        case 6:
-          dms.state = DetailedMotorStatus::CALIBRATING;
-          break;
-        default:
-          dms.state = DetailedMotorStatus::FAIL;
-      }
-    }
-    return dms;
-  }
-
   struct CommandResponse {
     enum Status { FAIL = 0, SUCCESS = 1, RUNNING = 2, ENDLIMIT_STOPPED = 3 };
     Status status{FAIL};
@@ -311,10 +265,10 @@ class CommandDecoder {
    * Note: Use read_encoder_addition() for direct int48_t position (Commandtype 0x31).
    *
    * @param cmd Command object with command_type=READ_ENCODER_CARRY and response data
-   * @param parent Optional ServoXxd parent for position conversion context
+   * @param parent Parent ServoXxd pointer for position conversion context
    * @return Position object with absolute encoder position in ticks, or default Position on error
    */
-  static Position read_encoder_carry(const Command &cmd, const ServoXxd *parent = nullptr) {
+  static Position read_encoder_carry(const Command &cmd, const ServoXxd *parent) {
     if (!validate_command_type(cmd, Commandtype::READ_ENCODER_CARRY))
       return Position(parent);
 
@@ -334,8 +288,8 @@ class CommandDecoder {
   /**
    * @brief Motor status states
    *
-   * Hardware response values for READ_MOTOR_STATUS (0x3A):
-   * 0 = FAIL       - Motor read fail
+   * Hardware response values for READ_MOTOR_STATUS (0xF1):
+   * 0 = FAIL       - Motor read fail (motor idle/disabled)
    * 1 = STOP       - Motor is stopped
    * 2 = SPEED_UP   - Motor is accelerating
    * 3 = SPEED_DOWN - Motor is decelerating
@@ -378,10 +332,12 @@ class CommandDecoder {
       return MotorStatus::FAIL;
 
     const auto &data = cmd.response;
-    if (data.empty())
+    // Response format: [Reserved:0x00][Status] - 2 bytes (1 Modbus register)
+    if (data.size() < 2)
       return MotorStatus::FAIL;
 
-    switch (data[0]) {
+    uint8_t status = data[1];  // Status is in second byte (data[0] is reserved)
+    switch (status) {
       case 0:
         return MotorStatus::FAIL;
       case 1:
@@ -397,7 +353,7 @@ class CommandDecoder {
       case 6:
         return MotorStatus::CALIBRATING;
       default:
-        ESP_LOGW(TAG, "Unknown motor status value: %u", data[0]);
+        ESP_LOGW(TAG, "Unknown motor status value: %u", status);
         return MotorStatus::FAIL;
     }
   }
@@ -440,52 +396,37 @@ class CommandDecoder {
     if (data.empty())
       return ZeroReturnStatus::FAIL;
 
-    switch (data[0]) {
+    uint8_t status = data[1];  // Status is in second byte (data[0] is reserved)
+    switch (status) {
       case 0:
         return ZeroReturnStatus::IN_PROGRESS;
-        break;
       case 1:
         return ZeroReturnStatus::SUCCESS;
-        break;
       case 2:
         return ZeroReturnStatus::FAIL;
       default:
-        break;
+        return ZeroReturnStatus::FAIL;
     }
-    return ZeroReturnStatus::FAIL;
   }
-
-  // Legacy alias for backward compatibility
-  using HomingStatus = ZeroReturnStatus;
-  /**
-   * @brief Legacy alias for read_zero_return_status
-   * @param cmd Command object with command_type=READ_ZERO_RETURN_STATUS and response data
-   * @return HomingStatus enum (same as ZeroReturnStatus)
-   */
-  static HomingStatus read_homing_status(const Command &cmd) { return read_zero_return_status(cmd); }
-
-  struct ProtectionStatus {
-    bool protected_state{false};
-  };
 
   /**
    * @brief Decode protection status
    *
    * @details Commandtype::READ_PROTECTION_STATUS (0x3E)
    * Function: 0x04 (Read Input Registers)
-   * Response: 1 byte - [status] (0=OK, 1=Protected/Error)
+   * Response: 2 bytes - [0x00][status] (0=OK, 1=Protected/Error)
    *
    * @param cmd Command object with command_type=READ_PROTECTION_STATUS and response data
-   * @return ProtectionStatus struct with protected_state boolean (true if protected/error)
+   * @return true if motor is protected/error, false if OK
    */
-  static ProtectionStatus read_protection_status(const Command &cmd) {
-    ProtectionStatus ps{};
+  static bool read_protection_status(const Command &cmd) {
     if (!validate_command_type(cmd, Commandtype::READ_PROTECTION_STATUS))
-      return ps;
+      return false;
 
     const auto &data = cmd.response;
-    ps.protected_state = (!data.empty() && data[0] != 0);
-    return ps;
+    // Response format: [Reserved:0x00][Status] - 2 bytes (1 Modbus register)
+    // Status: 0=OK, 1=Protected
+    return (data.size() >= 2 && data[1] != 0);
   }
 
   /**
@@ -520,92 +461,75 @@ class CommandDecoder {
       return ConfigData(parent);
 
     const auto &data = cmd.response;
-    if (data.size() < 38) {
+    // Datasheet: READ_ALL_CONFIG returns 19 registers = 38 data bytes
+    // (byte_count = 0x26). Each register carries two 1-byte parameters.
+    if (data.size() != 38) {
       ESP_LOGW(TAG, "Invalid READ_ALL_CONFIG response size: %zu bytes (expected 38)", data.size());
       return ConfigData(parent);
     }
 
     // Create ConfigData with required parent pointer
     ConfigData config(parent);
-    size_t idx = 0;
-
-    // REG1: Mode (2 bytes)
-    config.mode = static_cast<ControlMode>(data[idx++]);
-    idx++;  // Reserved
-
-    // REG2: Hold current (2 bytes)
-    uint8_t hw_hold = data[idx++];
-    // Clamp to valid range 0-8, then convert to enum
-    if (hw_hold > 8)
-      hw_hold = 8;
+    // REG1: Mode + Hold current (%)
+    config.mode = static_cast<ControlMode>(data[0]);
+    uint8_t hw_hold = data[1];
+    hw_hold = hw_hold > 8 ? 8 : hw_hold;  // clamp to valid range
     config.holding_current_percent = static_cast<HoldingCurrentPercent>(hw_hold);
-    idx++;  // Reserved
 
-    // REG3: Work current (2 bytes)
-    config.working_current_ma = (static_cast<uint16_t>(data[idx]) << 8) | data[idx + 1];
-    idx += 2;
+    // REG2: Working current (mA, big-endian)
+    config.working_current_ma = (static_cast<uint16_t>(data[2]) << 8) | data[3];
 
-    // REG4: Subdivision (2 bytes)
-    config.subdivision = data[idx++];
-    idx++;  // Reserved
+    // REG3: Subdivision + EN pin active level
+    config.subdivision = data[4] == 0 ? 1 : data[4];  // avoid 0 → divide-by-zero later
+    config.en_pin_active = static_cast<EnPinActive>(data[5]);
 
-    // REG5: En + Dir (2 bytes)
-    config.en_pin_active = static_cast<EnPinActive>(data[idx++]);
-    config.direction = static_cast<Direction>(data[idx++]);
+    // REG4: Direction + Auto screen off
+    config.direction = static_cast<Direction>(data[6]);
+    config.screen_mode = screen_mode_from_bool(data[7] != 0);
 
-    // REG6: AutoSDD + Protect (2 bytes)
-    config.screen_mode = screen_mode_from_bool(data[idx++] != 0);
-    config.protection = protection_mode_from_bool(data[idx++] != 0);
+    // REG5: Protection + Interpolation
+    config.protection = protection_mode_from_bool(data[8] != 0);
+    config.interpolation = interpolation_mode_from_bool(data[9] != 0);
 
-    // REG7: Mplyer + NULL (2 bytes)
-    config.interpolation = interpolation_mode_from_bool(data[idx++] != 0);
-    idx++;  // Reserved
+    // REG6: NULL + Baud rate (transport only) -> skip
+    // data[10] reserved, data[11] baud rate
 
-    // REG8: Baud rate + Slave address (2 bytes)
-    // Note: These are transport-layer parameters, not part of motor configuration
-    // Caller should extract these separately using read_transport_params()
-    idx += 2;  // Skip baud_rate and slave_address
+    // REG7: Slave address + Group address (transport) -> skip
 
-    // REG9: Group address + Respond/Active (2 bytes)
-    // Note: group_address, respond_enable, active_enable are transport-layer parameters
-    // Not stored in ConfigData - skip these bytes
-    idx += 2;  // Skip group_address and respond_active
+    // REG8: Respond/Active flags (transport) -> skip
 
-    // REG10: MODBUS + Key lock (2 bytes)
-    // Note: modbus_enable is transport-layer parameter - skip
-    idx++;  // Skip modbus_enable
-    config.keypad_lock = keypad_lock_from_bool(data[idx++] != 0);
+    // REG9: MODBUS enable (transport) + Key lock
+    config.keypad_lock = keypad_lock_from_bool(data[17] != 0);
 
-    // REG11-13: Homing parameters (6 bytes)
-    config.homing_trigger = static_cast<EndstopTrigger>(data[idx++]);
-    config.homing_direction = static_cast<Direction>(data[idx++]);
-    uint16_t homing_speed_rpm = (static_cast<uint16_t>(data[idx]) << 8) | data[idx + 1];
+    // REG10: Homing trigger + Homing direction
+    config.homing_trigger = static_cast<EndstopTrigger>(data[18]);
+    config.homing_direction = static_cast<Direction>(data[19]);
+
+    // REG11: Homing speed (RPM, big-endian)
+    uint16_t homing_speed_rpm = (static_cast<uint16_t>(data[20]) << 8) | data[21];
     config.homing_speed = Speed::from_rpm(static_cast<float>(homing_speed_rpm), config.parent);
-    idx += 2;
-    idx++;  // NULL
-    config.endstop_limit = endstop_limit_from_bool(data[idx++] != 0);
 
-    // REG14-16: No-limit homing (8 bytes total: 4 for reverse_angle + 2 for mode + 2 for current_ma)
-    uint32_t reverse_angle_ticks = (static_cast<uint32_t>(data[idx]) << 24) |
-                                   (static_cast<uint32_t>(data[idx + 1]) << 16) |
-                                   (static_cast<uint32_t>(data[idx + 2]) << 8) | static_cast<uint32_t>(data[idx + 3]);
-    config.nolimit_reverse_angle_ticks.set_ticks(static_cast<int32_t>(reverse_angle_ticks));
-    idx += 4;  // Advance 4 bytes for reverse_angle
-    config.homing_limit_mode =
-        homing_limit_mode_from_bool(((static_cast<uint16_t>(data[idx]) << 8) | data[idx + 1]) != 0);
-    idx += 2;  // Advance 2 bytes for mode
-    config.nolimit_current_ma = (static_cast<uint16_t>(data[idx]) << 8) | data[idx + 1];
-    idx += 2;  // Advance 2 bytes for current_ma
+    // REG12: NULL + EndLimit enable
+    config.endstop_limit = endstop_limit_from_bool(data[23] != 0);
 
-    // REG17: Remap + NULL (2 bytes)
-    idx++;  // NULL
-    config.limit_port_mapping = limit_port_mapping_from_bool(data[idx++] != 0);
+    // REG13: Reserved (0x0000) -> ignore
 
-    // REG18-19: 0_Mode parameters (4 bytes)
-    config.zero_mode = static_cast<ZeroModeMode>(data[idx++]);
-    config.zero_task = static_cast<ZeroModeTask>(data[idx++]);
-    config.zero_speed = static_cast<ZeroingSpeed>(data[idx++]);
-    config.zero_direction = static_cast<Direction>(data[idx++]);
+    // REG14-16: Sensorless homing / protection parameters (best-effort mapping)
+    // REG14: reverse angle (ticks, 16-bit)
+    config.nolimit_reverse_angle_ticks.set_ticks(static_cast<int32_t>((data[26] << 8) | data[27]));
+    // REG15: homing limit mode flag (non-zero => no-limit)
+    config.homing_limit_mode = homing_limit_mode_from_bool(data[28] != 0);
+    // REG16: sensorless homing current (mA, big-endian)
+    config.nolimit_current_ma = (static_cast<uint16_t>(data[30]) << 8) | data[31];
+
+    // REG17: limit port remap flag (byte 33)
+    config.limit_port_mapping = limit_port_mapping_from_bool(data[33] != 0);
+
+    // REG18-19: 0_Mode configuration
+    config.zero_mode = static_cast<ZeroModeMode>(data[34]);
+    config.zero_task = ZeroModeTask::CLEAN;  // Not encoded in READ_ALL_CONFIG; use safe default
+    config.zero_speed = static_cast<ZeroingSpeed>(data[36]);
+    config.zero_direction = static_cast<Direction>(data[37]);
 
     return config;
   }

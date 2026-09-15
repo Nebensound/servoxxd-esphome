@@ -4,6 +4,7 @@
 #include "servoxxd_command_decoder.h"
 #include "servoxxd_commands.h"
 #include "servoxxd_modbus.h"  // Layer 4 implementation (only in .cpp)
+#include <cmath>
 
 namespace esphome {
 namespace servoxxd {
@@ -36,7 +37,7 @@ void ServoXxd::set_control_mode(ControlMode mode) {
   this->config_.mode = mode;
 
   // Only send to hardware if setup is complete
-  if (!this->is_setup_ || this->engine_ == nullptr)
+  if (this->setup_state_ != SetupState::COMPLETED || this->engine_ == nullptr)
     return;
 
   // Critical setting - requires motor restart and full reconfiguration
@@ -50,9 +51,15 @@ void ServoXxd::set_control_mode(ControlMode mode) {
 // ============================================================================
 
 void ServoXxd::set_target(int32_t steps) {
-  // Convert int32_t steps to Position and delegate to set_target_pos
+  // Convert int32_t steps to Position object
   Position target = Position::from_steps(steps, this);
+  // Update target position (base class and internal)
   this->set_target_pos(target);
+  // Trigger movement immediately with default speed/acceleration
+  // This is called by ESPHome stepper.set_target action
+  if (this->setup_state_ == SetupState::COMPLETED && this->engine_ != nullptr) {
+    this->move_to(target);
+  }
 }
 
 void ServoXxd::set_max_speed(float speed) {
@@ -85,10 +92,7 @@ void ServoXxd::set_acceleration(float accel) {
 // Action-API Methods
 // ============================================================================
 
-void ServoXxd::set_speed(const Speed &speed) {
-  this->default_speed_ = speed;
-  ESP_LOGD(TAG, "set_speed: %.2f RPM", speed.rpm());
-}
+void ServoXxd::set_speed(const Speed &speed) { this->default_speed_ = speed; }
 
 void ServoXxd::set_microsteps(uint8_t microsteps) {
   // Validate microstepping value (1-256 per spec)
@@ -97,22 +101,24 @@ void ServoXxd::set_microsteps(uint8_t microsteps) {
     return;
   }
 
-  // Always update member variable
+  if (this->config_.subdivision == microsteps) {
+    return;
+  }
+
+  // Update config
   this->config_.subdivision = microsteps;
 
   // Only send to hardware if setup is complete
-  if (!this->is_setup_ || this->engine_ == nullptr)
+  if (this->setup_state_ != SetupState::COMPLETED || this->engine_ == nullptr)
     return;
 
   // Critical setting - requires motor restart and full reconfiguration
-  ESP_LOGW(TAG, "Microstepping changed - restarting motor...");
+  // Steps per revolution effectively changes, which affects all unit conversions
+  ESP_LOGW(TAG, "Microstepping changed to %u - restarting motor...", microsteps);
   this->engine_->setup_motor();
 }
 
-void ServoXxd::set_acceleration(const Acceleration &accel) {
-  this->default_acceleration_ = accel;
-  ESP_LOGD(TAG, "set_acceleration: %.2f RPM/s", accel.get_rpm_per_sec());
-}
+void ServoXxd::set_acceleration(const Acceleration &accel) { this->default_acceleration_ = accel; }
 
 void ServoXxd::set_zero() {
   // Validate that virtual homing is configured
@@ -122,24 +128,16 @@ void ServoXxd::set_zero() {
     return;
   }
 
-  ESP_LOGD(TAG, "set_zero: Sending command to hardware...");
-
   // Delegate to StepperEngine - position will be updated via callback after confirmation
   this->engine_->set_zero();
 }
 
 void ServoXxd::report_position(const Position &pos) {
-  // Calculate offset: offset = desired_position - raw_encoder_position
-  // So that: current_position = raw_encoder + offset = desired_position
-
-  // Poll encoder asynchronously and calculate offset in callback
-  this->engine_->poll_encoder_position([this, pos](const Position &raw_encoder) {
-    this->position_offset_ = pos - raw_encoder;
-    set_current_pos(pos);
-
-    ESP_LOGD(TAG, "report_position: Raw=%.2f, Desired=%.2f, Offset=%.2f", raw_encoder.get_steps(), pos.get_steps(),
-             this->position_offset_.get_steps());
-  });
+  // TODO: Offset-Feature wird später implementiert
+  // Für jetzt: Setze einfach die aktuelle Position direkt
+  set_current_pos(pos);
+  ESP_LOGW(TAG, "report_position: Feature not yet implemented - just setting current_position to %.0f steps",
+           pos.get_steps());
 }
 
 // ============================================================================
@@ -160,10 +158,10 @@ void ServoXxd::set_target_pos(const Position &pos) {
 // Constructor / Destructor
 // ============================================================================
 
-ServoXxd::ServoXxd() 
-  : config_(this) {  // ConfigData REQUIRES parent pointer - no defaults allowed
+ServoXxd::ServoXxd() : config_(this) {  // ConfigData REQUIRES parent pointer - no defaults allowed
   // config_.parent is now set via constructor
-  // Speed/Position objects (homing_speed, nolimit_reverse_angle_ticks) are initialized with parent via ConfigData constructor
+  // Speed/Position objects (homing_speed, nolimit_reverse_angle_ticks) are initialized with parent via ConfigData
+  // constructor
 
   // Note: homing_ union will be initialized by Python setters from YAML configuration
   // Note: transport_ and engine_ are created in setup() after all setters have run
@@ -225,6 +223,21 @@ std::string ServoXxd::get_state_string() const {
   return this->engine_->get_state_string();
 }
 
+std::string ServoXxd::get_setup_state_string() const {
+  switch (this->setup_state_) {
+    case SetupState::NOT_STARTED:
+      return "NOT_STARTED";
+    case SetupState::IN_PROGRESS:
+      return "IN_PROGRESS";
+    case SetupState::COMPLETED:
+      return "COMPLETED";
+    case SetupState::FAILED:
+      return "FAILED";
+    default:
+      return "UNKNOWN";
+  }
+}
+
 void ServoXxd::stop(std::optional<Acceleration> decel) {
   if (this->engine_ == nullptr)
     return;
@@ -271,10 +284,18 @@ void ServoXxd::setup() {
   ESP_LOGCONFIG(TAG, "Setting up ServoXxd Modbus...");
 
   // Validate configuration
-  if (this->steps_per_revolution_ <= 0.0f) {
-    ESP_LOGE(TAG, "Invalid steps_per_revolution: %.1f (must be > 0)", this->steps_per_revolution_);
+  if (this->config_.subdivision < 1) {
+    ESP_LOGE(TAG, "Invalid microstepping: %u (must be >= 1)", this->config_.subdivision);
     this->mark_failed();
     return;
+  }
+
+  // Synchronize homing_ values to config_ for proper comparison in get_update_command_types()
+  // homing_ is set by YAML setters, config_ is used for hardware comparison
+  if (this->homing_.mode == HomingMode::ENDSTOP) {
+    this->config_.homing_trigger = this->homing_.endstop_trigger;
+    this->config_.homing_direction = (this->homing_.direction == HomingDirection::CW) ? Direction::CW : Direction::CCW;
+    this->config_.homing_speed = this->homing_.speed;
   }
 
   // Create Layer 4: ModbusTransport
@@ -336,15 +357,8 @@ void ServoXxd::loop() {
     return;  // Don't process user commands yet
   }
 
-  // Setup complete - process user commands
-  if (this->engine_ != nullptr) {
-    // Check if target_position was changed externally (via ESPHome action)
-    if (this->target_position != static_cast<int32_t>(this->target_pos_.get_steps())) {
-      Position position(this->target_position, PositionUnit::STEPS, this);
-      set_target_pos(position);
-      move_to(position);
-    }
-  }
+  // Note: No need to poll target_position here
+  // ESPHome stepper.set_target action calls set_target(), which directly triggers move_to()
 }
 
 void ServoXxd::dump_config() {
@@ -360,8 +374,9 @@ void ServoXxd::dump_config() {
   ESP_LOGCONFIG(TAG, "  Control Mode: %s", ctrl_modes[static_cast<uint8_t>(this->config_.mode)]);
 
   // Motor configuration
-  ESP_LOGCONFIG(TAG, "  Steps per Revolution: %.1f", this->steps_per_revolution_);
+  ESP_LOGCONFIG(TAG, "  Base Steps per Revolution: %.0f (hardware constant)", BASE_STEPS_PER_REVOLUTION);
   ESP_LOGCONFIG(TAG, "  Microstepping: %u", this->config_.subdivision);
+  ESP_LOGCONFIG(TAG, "  Effective Steps per Revolution: %.0f", get_effective_steps_per_revolution());
 
   // Current settings (only effective in SR_OPEN and SR_CLOSE modes)
   if (this->config_.mode != ControlMode::SR_VFOC) {
@@ -431,7 +446,7 @@ void ServoXxd::dump_config() {
   ESP_LOGCONFIG(TAG, "  Position Offset: %.0f steps (%.2f rev)", this->position_offset_.get_steps(),
                 this->position_offset_.revolutions());
   ESP_LOGCONFIG(TAG, "  Current Speed: %.1f steps/s (%.1f RPM)", this->current_speed_,
-                this->current_speed_ * 60.0f / this->steps_per_revolution_);
+                this->current_speed_ * 60.0f / get_effective_steps_per_revolution());
 
   // Engine state
   if (this->engine_ != nullptr) {

@@ -347,36 +347,6 @@ class StepperEngine {
   // Callbacks
   // ============================================================================
 
-  /**
-   * @brief Register callback for position updates
-   *
-   * Callback is invoked whenever position changes (polled every 100ms).
-   *
-   * @param cb Callback function
-   */
-  void set_position_update_callback(std::function<void(Position)> cb);
-
-  /**
-   * @brief Register callback for speed updates
-   *
-   * @param cb Callback function
-   */
-  void set_speed_update_callback(std::function<void(Speed)> cb);
-
-  /**
-   * @brief Register callback for protection triggered
-   *
-   * @param cb Callback function
-   */
-  void set_protection_callback(std::function<void()> cb);
-
-  /**
-   * @brief Register callback for motor enabled/disabled
-   *
-   * @param cb Callback function (parameter: true = enabled, false = disabled)
-   */
-  void set_motor_status_callback(std::function<void(bool)> cb);
-
  private:
   // ============================================================================
   // Private Members
@@ -389,17 +359,15 @@ class StepperEngine {
 
   // Status tracking
   Speed current_speed_;        ///< Last known motor speed (RPM)
-  bool motor_enabled_;         ///< Motor enabled status
   bool protection_triggered_;  ///< Protection triggered flag
 
   // State timing
-  uint32_t state_enter_time_;  ///< State entry timestamp for timeout tracking
-
-  // Callbacks
-  std::function<void(Position)> position_callback_;
-  std::function<void(Speed)> speed_callback_;
-  std::function<void()> protection_callback_;
-  std::function<void(bool)> motor_status_callback_;
+  uint32_t state_enter_time_;                                ///< State entry timestamp for timeout tracking
+  uint32_t last_recovery_attempt_time_{0};                   ///< Last recovery attempt timestamp
+  bool homed_{false};                                        ///< Set once a homing sequence completed successfully
+  uint32_t last_poll_time_{0};                               ///< Last hardware poll (per instance, multi-motor safe)
+  static constexpr uint32_t ERROR_RECOVERY_DELAY_MS = 5000;  ///< Delay before first recovery attempt (5s)
+  static constexpr uint32_t ERROR_RECOVERY_INTERVAL_MS = 10000;  ///< Interval between recovery attempts (10s)
 
   // Buffered commands (for commands that need to be deferred)
   bool disable_pending_;  ///< Disable command buffered (execute after stop)
@@ -434,6 +402,15 @@ class StepperEngine {
    */
   void check_state_timeouts();
 
+  /**
+   * @brief Attempt automatic recovery from Error state
+   *
+   * Queries motor status to check if error condition persists.
+   * If motor reports OK, calls release_protection() to return to Idle.
+   * Called automatically after ERROR_RECOVERY_DELAY_MS in Error state.
+   */
+  void attempt_error_recovery();
+
   // ============================================================================
   // Private Methods - Event Processing
   // ============================================================================
@@ -459,9 +436,9 @@ class StepperEngine {
   /**
    * @brief Process motor status update
    *
-   * Updates motor_enabled_, invokes callback.
+   * Sets Motor Status
    *
-   * @param enabled Motor enabled (true/false)
+   * @param status Motor status enum
    */
   void process_motor_status_update(CommandDecoder::MotorStatus status);
 

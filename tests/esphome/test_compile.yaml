@@ -49,11 +49,12 @@ modbus:
 stepper:
   - platform: servoxxd
     id: test_stepper
-    steps_per_revolution: 3200 # 200 steps × 16 microsteps
+    microsteps: 1 # vFOC mode only supports microsteps=1
     speed: 1000 steps/s
     acceleration: 500 steps/s^2
     servo_type: SERVO42D
     mode: POSITION
+    control_mode: SR_VFOC
 
     # MODBUS configuration
     modbus_id: modbus_bus
@@ -83,7 +84,7 @@ button:
 
   # Continuous movement with different speeds (testing units)
   - platform: template
-    name: "Run Continuous - Steps/s"
+    name: "Run Continuous - Steps per s"
     on_press:
       - stepper.run_continuous:
           id: test_stepper
@@ -97,7 +98,7 @@ button:
           speed: 10 RPM
 
   - platform: template
-    name: "Run Continuous - Degrees/s"
+    name: "Run Continuous - Degrees per s"
     on_press:
       - stepper.run_continuous:
           id: test_stepper

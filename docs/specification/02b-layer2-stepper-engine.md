@@ -94,6 +94,66 @@ enum class State {
 };
 ```
 
+### State Diagram
+
+```mermaid
+stateDiagram-v2
+    [*] --> Disabled: Initial State
+    
+    Disabled --> Idle: enable()
+    
+    Idle --> Disabled: disable()
+    Idle --> Moving: move_to() [Position Mode]
+    Idle --> Running: run_continuous() [Speed Mode]
+    Idle --> Homing: home() [Position Mode]
+    
+    Moving --> Idle: Target reached (encoder = target)
+    Moving --> Stopping: stop()
+    Moving --> Error: Protection / Timeout
+    
+    Running --> Stopping: stop()
+    Running --> Error: Protection / Timeout
+    
+    Homing --> Idle: Homing completed successfully
+    Homing --> Error: Homing failed / Timeout
+    
+    Stopping --> Idle: Standstill (speed = 0)
+    Stopping --> Error: Timeout
+    
+    Error --> Idle: release_protection()
+    Error --> Disabled: disable()
+    
+    note right of Disabled
+        Motor disabled
+        No motion possible
+    end note
+    
+    note right of Idle
+        Motor ready
+        Waiting for commands
+    end note
+    
+    note right of Moving
+        Position Mode only
+        Target position set
+    end note
+    
+    note right of Running
+        Speed Mode only
+        Continuous rotation
+    end note
+    
+    note right of Error
+        Protection active
+        Transport error
+        Timeout occurred
+    end note
+```
+
+**Special Transitions:**
+- `emergency_stop()`: Can be called from **any state** → immediately transitions to `Error` state, bypasses CommandQueue, halts motor
+- State transitions are validated before execution (see Command Validation Matrix below)
+
 ### State Transitions
 
 | From → To | Trigger | Condition | Action |
@@ -159,6 +219,31 @@ When move_to() called during Moving/Stopping, two strategies:
 2. **Coalescing Buffer** - Hardware doesn't support, buffer newest target only
 
 Developer must test hardware and implement one strategy permanently.
+
+## Runtime State Members
+
+**Architectural Decision:** StepperEngine (Layer 2) owns all movement-related runtime state.
+Layer 1 (ServoXxd) is a Facade and delegates state queries to the engine.
+
+```cpp
+// Core state
+ServoXxd* parent_;              // Parent component (configuration, helpers)
+CommandQueue* queue_;           // Command queue for serial execution
+State state_;                   // Current state machine state
+bool emergency_flag_;           // Emergency stop flag (cleared by release_protection)
+
+// Status tracking (from hardware polling)
+Speed current_speed_;           // Last known motor speed from hardware (RPM)
+bool protection_triggered_;     // Protection status (locked-rotor, etc.)
+
+// State timing
+uint32_t state_enter_time_;     // State entry timestamp for timeout tracking
+
+// Buffered commands
+bool disable_pending_;          // Disable command deferred (execute after stop)
+```
+
+**Note:** Position tracking (`current_pos_`, `target_pos_`) remains in Layer 1 for ESPHome base class compatibility (`stepper::Stepper::current_position`, `target_position`).
 
 ## Interface to ServoXxd (Layer 1)
 

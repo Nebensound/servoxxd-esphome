@@ -192,7 +192,6 @@ OPERATING_MODES = {
 # Configuration constants
 CONF_MODBUS_ID = "modbus_id"
 CONF_ADDRESS = "address"
-CONF_STEPS_PER_REVOLUTION = "steps_per_revolution"
 CONF_MICROSTEPS = "microsteps"
 CONF_SERVO_TYPE = "servo_type"
 CONF_CONTROL_MODE = "control_mode"
@@ -222,18 +221,6 @@ def validate_modbus_address(value):
     if value < 1 or value > 247:
         raise cv.Invalid(
             f"Modbus address must be between 0x01 and 0xF7 (1-247), got {hex(value)}"
-        )
-    return value
-
-
-def validate_steps_per_revolution(value):
-    """Validate steps per revolution - must be positive float."""
-    value = cv.positive_float(value)
-    if value <= 0:
-        raise cv.Invalid(
-            "steps_per_revolution must be > 0! "
-            "This is critical for all unit conversions. "
-            "Calculate as: base_steps * microsteps (e.g., 200 * 16 = 3200)"
         )
     return value
 
@@ -723,8 +710,7 @@ CONFIG_SCHEMA = cv.All(
             cv.GenerateID(CONF_MODBUS_ID): cv.use_id(modbus.Modbus),
             # Basic configuration
             cv.Optional(CONF_ADDRESS, default=0x01): validate_modbus_address,
-            cv.Required(CONF_STEPS_PER_REVOLUTION): validate_steps_per_revolution,
-            cv.Optional(CONF_MICROSTEPS, default=16): validate_microsteps,
+            cv.Optional(CONF_MICROSTEPS, default=1): validate_microsteps,
             cv.Required(CONF_SERVO_TYPE): cv.enum(SERVO_TYPES, upper=True),
             cv.Optional(CONF_CONTROL_MODE, default="SR_VFOC"): cv.enum(
                 CONTROL_MODES, upper=True
@@ -741,8 +727,17 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_EN_PIN_ACTIVE, default="LOW"): cv.enum(
                 EN_PIN_ACTIVE_VALUES, upper=True
             ),
-            cv.Optional(CONF_AUTO_SCREEN_OFF, default="AUTO_OFF"): cv.enum(SCREEN_MODES, upper=True),
-            cv.Optional(CONF_LOCK_KEYS_AT_STARTUP, default="UNLOCKED"): cv.enum(KEYPAD_LOCK_VALUES, upper=True),
+            cv.Optional(CONF_AUTO_SCREEN_OFF, default="AUTO_OFF"): cv.All(
+                cv.Any(cv.boolean, cv.enum(SCREEN_MODES, upper=True)),
+                lambda value: (
+                    "AUTO_OFF"
+                    if value is True
+                    else ("ALWAYS_ON" if value is False else value)
+                ),
+            ),
+            cv.Optional(CONF_LOCK_KEYS_AT_STARTUP, default="UNLOCKED"): cv.enum(
+                KEYPAD_LOCK_VALUES, upper=True
+            ),
             # Operating mode
             cv.Optional(CONF_MODE, default="POSITION"): cv.enum(
                 OPERATING_MODES, upper=True
@@ -767,6 +762,17 @@ def validate_config_cross_fields(config):
     """
     Validate cross-field dependencies and constraints.
     """
+    # Validate microsteps configuration in vFOC modes
+    control_mode = config.get(CONF_CONTROL_MODE, "SR_VFOC")
+    if control_mode in ("CR_VFOC", "SR_VFOC"):
+        # vFOC mode only supports microsteps: 1 (no microstepping)
+        if CONF_MICROSTEPS in config and config[CONF_MICROSTEPS] != 1:
+            raise cv.Invalid(
+                f"microsteps must be 1 in {control_mode} mode (hardware limitation). "
+                "vFOC mode does not support microstepping. "
+                "Either set 'microsteps: 1' or switch to OPEN/CLOSE control mode."
+            )
+
     # Check for unsupported deceleration field (hardware limitation)
     if "deceleration" in config:
         raise cv.Invalid(
@@ -881,17 +887,16 @@ async def to_code(config):
 
     # Set basic configuration
     cg.add(var.set_address(config[CONF_ADDRESS]))
-    cg.add(var.set_steps_per_revolution(config[CONF_STEPS_PER_REVOLUTION]))
     cg.add(var.set_microsteps(config[CONF_MICROSTEPS]))
     cg.add(var.set_servo_type(config[CONF_SERVO_TYPE]))
     cg.add(var.set_control_mode(config[CONF_CONTROL_MODE]))
 
     # Set speed/acceleration (use max_speed as primary)
     speed_dict = config[CONF_MAX_SPEED]
-    await set_speed_from_dict(var, speed_dict, config[CONF_STEPS_PER_REVOLUTION])
+    await set_speed_from_dict(var, speed_dict, config[CONF_MICROSTEPS])
 
     accel_dict = config[CONF_ACCELERATION]
-    await set_acceleration_from_dict(var, accel_dict, config[CONF_STEPS_PER_REVOLUTION])
+    await set_acceleration_from_dict(var, accel_dict, config[CONF_MICROSTEPS])
 
     # Set motor configuration
     cg.add(var.set_working_current(config[CONF_WORKING_CURRENT]))
@@ -903,7 +908,7 @@ async def to_code(config):
     holding_enum = HOLDING_CURRENT_PERCENT_VALUES[holding_percent_int]
     cg.add(var.set_holding_current_percent(holding_enum))
     cg.add(var.set_en_pin_active(config[CONF_EN_PIN_ACTIVE]))
-    cg.add(var.set_auto_screen_off(config[CONF_AUTO_SCREEN_OFF]))
+    cg.add(var.set_auto_screen_off(SCREEN_MODES[config[CONF_AUTO_SCREEN_OFF]]))
     cg.add(var.set_lock_keys_at_startup(config[CONF_LOCK_KEYS_AT_STARTUP]))
 
     # Set operating mode
@@ -931,7 +936,7 @@ async def to_code(config):
                 await set_speed_from_dict(
                     var,
                     homing_speed,
-                    config[CONF_STEPS_PER_REVOLUTION],
+                    config[CONF_MICROSTEPS],
                     "set_homing_speed",
                 )
 
@@ -944,14 +949,14 @@ async def to_code(config):
             cg.add(var.set_homing_at_startup(homing[CONF_AT_STARTUP]))
 
 
-async def set_speed_from_dict(var, speed_dict, steps_per_rev, method_name="set_speed"):
+async def set_speed_from_dict(var, speed_dict, microsteps, method_name="set_speed"):
     """
     Create Speed object from dict and pass to C++ method.
 
     Args:
         var: Component variable
         speed_dict: {"value": float, "unit": "RPM"} dictionary
-        steps_per_rev: Steps per revolution (unused, kept for compatibility)
+        microsteps: Microstepping subdivisions (for documentation only, C++ handles conversion)
         method_name: Name of method to call (set_speed or set_homing_speed)
     """
     value = speed_dict["value"]
@@ -970,10 +975,15 @@ async def set_speed_from_dict(var, speed_dict, steps_per_rev, method_name="set_s
     cg.add(getattr(var, method_name)(speed_obj))
 
 
-async def set_acceleration_from_dict(var, accel_dict, steps_per_rev):
+async def set_acceleration_from_dict(var, accel_dict, microsteps):
     """
     Pass acceleration value and unit to C++ for runtime conversion.
-    C++ will handle the conversion based on steps_per_revolution.
+    C++ will handle the conversion based on BASE_STEPS_PER_REVOLUTION and microsteps.
+
+    Args:
+        var: Component variable
+        accel_dict: {"value": float, "unit": "RPM_PER_S"} dictionary
+        microsteps: Microstepping subdivisions (for documentation only, C++ handles conversion)
     """
     value = accel_dict["value"]
     unit = accel_dict["unit"]
@@ -1023,12 +1033,13 @@ async def stepper_set_target_to_code(config, action_id, template_arg, args):
     if isinstance(pos_config, dict):
         # Value with unit - pass both to C++ for runtime conversion
         template_ = await cg.templatable(pos_config["value"], args, cg.float_)
-        cg.add(var.set_target(template_))
+        cg.add(var.set_value(template_))
         cg.add(var.set_unit(POSITION_UNITS[pos_config["unit"]]))
     else:
-        # Plain value in steps
-        template_ = await cg.templatable(pos_config, args, cg.int32)
-        cg.add(var.set_target(template_))
+        # Top-level lambda: value in steps
+        template_ = await cg.templatable(pos_config, args, cg.float_)
+        cg.add(var.set_value(template_))
+        cg.add(var.set_unit(POSITION_UNITS["STEPS"]))
 
     return var
 
@@ -1053,12 +1064,13 @@ async def stepper_report_position_to_code(config, action_id, template_arg, args)
     if isinstance(pos_config, dict):
         # Value with unit - pass both to C++ for runtime conversion
         template_ = await cg.templatable(pos_config["value"], args, cg.float_)
-        cg.add(var.set_position(template_))
+        cg.add(var.set_value(template_))
         cg.add(var.set_unit(POSITION_UNITS[pos_config["unit"]]))
     else:
-        # Plain value in steps
-        template_ = await cg.templatable(pos_config, args, cg.int32)
-        cg.add(var.set_position(template_))
+        # Top-level lambda: value in steps
+        template_ = await cg.templatable(pos_config, args, cg.float_)
+        cg.add(var.set_value(template_))
+        cg.add(var.set_unit(POSITION_UNITS["STEPS"]))
 
     return var
 
@@ -1130,9 +1142,10 @@ async def stepper_run_continuous_to_code(config, action_id, template_arg, args):
             cg.add(var.set_speed(template_))
             cg.add(var.set_speed_unit(SPEED_UNITS[speed_config["unit"]]))
         else:
-            # Plain value
+            # Top-level lambda: value in steps/s
             template_ = await cg.templatable(speed_config, args, cg.float_)
             cg.add(var.set_speed(template_))
+            cg.add(var.set_speed_unit(SPEED_UNITS["STEPS_PER_SEC"]))
 
     # Handle acceleration if provided
     if CONF_ACCELERATION in config:
@@ -1143,9 +1156,10 @@ async def stepper_run_continuous_to_code(config, action_id, template_arg, args):
             cg.add(var.set_acceleration(template_))
             cg.add(var.set_acceleration_unit(ACCELERATION_UNITS[accel_config["unit"]]))
         else:
-            # Plain value
-            template_ = await cg.templatable(accel_config, args, cg.uint16)
+            # Top-level lambda: value in steps/s^2
+            template_ = await cg.templatable(accel_config, args, cg.float_)
             cg.add(var.set_acceleration(template_))
+            cg.add(var.set_acceleration_unit(ACCELERATION_UNITS["STEPS_PER_SEC_SQ"]))
 
     return var
 
@@ -1179,9 +1193,10 @@ async def stepper_stop_to_code(config, action_id, template_arg, args):
             cg.add(var.set_acceleration(template_))
             cg.add(var.set_acceleration_unit(ACCELERATION_UNITS[accel_config["unit"]]))
         else:
-            # Plain value
-            template_ = await cg.templatable(accel_config, args, cg.uint16)
+            # Top-level lambda: value in steps/s^2
+            template_ = await cg.templatable(accel_config, args, cg.float_)
             cg.add(var.set_acceleration(template_))
+            cg.add(var.set_acceleration_unit(ACCELERATION_UNITS["STEPS_PER_SEC_SQ"]))
 
     return var
 
@@ -1324,7 +1339,7 @@ async def stepper_set_working_current_to_code(config, action_id, template_arg, a
     """Change working current at runtime."""
     parent = await cg.get_variable(config[CONF_ID])
     var = cg.new_Pvariable(action_id, template_arg, parent)
-    template_ = await cg.templatable(config[CONF_CURRENT], args, cg.int_)
+    template_ = await cg.templatable(config[CONF_CURRENT], args, cg.uint16)
     cg.add(var.set_current(template_))
     return var
 
@@ -1345,28 +1360,9 @@ async def stepper_set_holding_current_percent_to_code(
     """Change holding current percentage at runtime."""
     parent = await cg.get_variable(config[CONF_ID])
     var = cg.new_Pvariable(action_id, template_arg, parent)
-    # Convert percentage (0.0-1.0) to enum value (10%-90% in 10% steps)
-    # For non-templatable values, convert directly
-    if cg.is_template(config[CONF_PERCENT]):
-        # For templates, we need to generate code that rounds to nearest 10%
-        # This is complex, so for now we just pass the raw template and handle in C++
-        template_ = await cg.templatable(config[CONF_PERCENT], args, cg.float_)
-        # Generate lambda that converts float to enum
-        cg.add(var.set_percent(cg.RawExpression(
-            f"[](float p) {{ "
-            f"uint8_t percent_int = static_cast<uint8_t>(std::round(p * 100.0f)); "
-            f"percent_int = std::max(10, std::min(90, (percent_int + 5) / 10 * 10)); "
-            f"return static_cast<HoldingCurrentPercent>((percent_int - 10) / 10); "
-            f"}}({template_})"
-        )))
-    else:
-        # For static values, convert at compile time
-        holding_percent_float = config[CONF_PERCENT]
-        holding_percent_int = int(round(holding_percent_float * 100))
-        # Round to nearest 10% and clamp to 10-90 range
-        holding_percent_int = max(10, min(90, (holding_percent_int + 5) // 10 * 10))
-        holding_enum = HOLDING_CURRENT_PERCENT_VALUES[holding_percent_int]
-        cg.add(var.set_percent(holding_enum))
+    # Percentage (0.0-1.0) is mapped to the 10-90 % enum (10 % steps) at runtime in C++
+    template_ = await cg.templatable(config[CONF_PERCENT], args, cg.float_)
+    cg.add(var.set_percent(template_))
     return var
 
 

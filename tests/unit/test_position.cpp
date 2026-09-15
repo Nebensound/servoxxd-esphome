@@ -166,7 +166,7 @@ void test_position_split_format() {
 
   // Test: Create from total ticks - 3.5 revolutions
   int64_t total_ticks = 3 * 16384 + 8192;  // 57344
-  Position pos = Position::from_ticks(total_ticks);
+  Position pos = Position::from_ticks(total_ticks, nullptr);
   assert(pos.revolutions() == 3);
   assert(pos.angle_ticks() == 8192);
 
@@ -176,7 +176,7 @@ void test_position_split_format() {
             << std::endl;
 
   // Test: Create from ticks and verify round-trip
-  Position pos2 = Position::from_ticks(57344);
+  Position pos2 = Position::from_ticks(57344, nullptr);
   assert(pos2.revolutions() == 3);
   assert(pos2.angle_ticks() == 8192);
   assert(pos2.get_ticks() == 57344);
@@ -188,7 +188,7 @@ void test_position_carry_borrow() {
 
   // Test: Overflow in ticks should normalize to revolutions
   int64_t ticks_overflow = 16384 + 100;  // Should be 1 rev + 100 ticks
-  Position pos = Position::from_ticks(ticks_overflow);
+  Position pos = Position::from_ticks(ticks_overflow, nullptr);
   assert(pos.revolutions() == 1);
   assert(pos.angle_ticks() == 100);
   std::cout << "  ✓ Overflow: from_ticks(16484) → " << pos.revolutions() << " rev + " << pos.angle_ticks() << " ticks"
@@ -196,7 +196,7 @@ void test_position_carry_borrow() {
 
   // Test: Large overflow
   int64_t ticks_large = 32768 + 200;  // Should be 2 rev + 200 ticks
-  Position pos2 = Position::from_ticks(ticks_large);
+  Position pos2 = Position::from_ticks(ticks_large, nullptr);
   assert(pos2.revolutions() == 2);
   assert(pos2.angle_ticks() == 200);
   std::cout << "  ✓ Large overflow: from_ticks(32968) → " << pos2.revolutions() << " rev + " << pos2.angle_ticks()
@@ -256,6 +256,137 @@ void test_position_arithmetic() {
   assert(pos1 != pos2);
   assert(!(pos1 != pos3));
   std::cout << "  ✓ Inequality: pos1 != pos2, !(pos1 != pos3)" << std::endl;
+}
+
+void test_position_comparison_operators() {
+  std::cout << "Testing comparison operators (<, >, <=, >=)..." << std::endl;
+
+  float steps_per_rev = 3200.0f;
+  MockServoXxd mock(steps_per_rev);
+
+  Position pos1(1.0, PositionUnit::REVOLUTIONS, &mock);  // 1 rev
+  Position pos2(0.5, PositionUnit::REVOLUTIONS, &mock);  // 0.5 rev
+  Position pos3(1.0, PositionUnit::REVOLUTIONS, &mock);  // 1 rev (same as pos1)
+  Position pos4(1.5, PositionUnit::REVOLUTIONS, &mock);  // 1.5 rev
+
+  // Test < operator
+  assert(pos2 < pos1);     // 0.5 < 1.0
+  assert(pos1 < pos4);     // 1.0 < 1.5
+  assert(!(pos1 < pos3));  // 1.0 !< 1.0
+  assert(!(pos1 < pos2));  // 1.0 !< 0.5
+  std::cout << "  ✓ Less than (<): pos2 < pos1, pos1 < pos4, !(pos1 < pos3), !(pos1 < pos2)" << std::endl;
+
+  // Test > operator
+  assert(pos1 > pos2);     // 1.0 > 0.5
+  assert(pos4 > pos1);     // 1.5 > 1.0
+  assert(!(pos1 > pos3));  // 1.0 !> 1.0
+  assert(!(pos2 > pos1));  // 0.5 !> 1.0
+  std::cout << "  ✓ Greater than (>): pos1 > pos2, pos4 > pos1, !(pos1 > pos3), !(pos2 > pos1)" << std::endl;
+
+  // Test <= operator
+  assert(pos2 <= pos1);     // 0.5 <= 1.0
+  assert(pos1 <= pos4);     // 1.0 <= 1.5
+  assert(pos1 <= pos3);     // 1.0 <= 1.0 (equal)
+  assert(!(pos1 <= pos2));  // 1.0 !<= 0.5
+  std::cout << "  ✓ Less than or equal (<=): pos2 <= pos1, pos1 <= pos4, pos1 <= pos3, !(pos1 <= pos2)" << std::endl;
+
+  // Test >= operator
+  assert(pos1 >= pos2);     // 1.0 >= 0.5
+  assert(pos4 >= pos1);     // 1.5 >= 1.0
+  assert(pos1 >= pos3);     // 1.0 >= 1.0 (equal)
+  assert(!(pos2 >= pos1));  // 0.5 !>= 1.0
+  std::cout << "  ✓ Greater than or equal (>=): pos1 >= pos2, pos4 >= pos1, pos1 >= pos3, !(pos2 >= pos1)" << std::endl;
+
+  // Test with negative positions
+  Position neg1(-1.0, PositionUnit::REVOLUTIONS, &mock);  // -1 rev
+  Position neg2(-0.5, PositionUnit::REVOLUTIONS, &mock);  // -0.5 rev
+
+  assert(neg1 < neg2);  // -1 < -0.5
+  assert(neg1 < pos2);  // -1 < 0.5
+  assert(neg2 > neg1);  // -0.5 > -1
+  assert(pos2 > neg1);  // 0.5 > -1
+  std::cout << "  ✓ Negative comparisons: neg1 < neg2, neg1 < pos2, neg2 > neg1, pos2 > neg1" << std::endl;
+
+  // Test with fractional ticks (more precise comparison)
+  Position frac1(0, PositionUnit::REVOLUTIONS, &mock);
+  frac1.set_ticks(100);  // 100 ticks
+  Position frac2(0, PositionUnit::REVOLUTIONS, &mock);
+  frac2.set_ticks(200);  // 200 ticks
+
+  assert(frac1 < frac2);   // 100 ticks < 200 ticks
+  assert(frac2 > frac1);   // 200 ticks > 100 ticks
+  assert(frac1 <= frac2);  // 100 ticks <= 200 ticks
+  assert(frac2 >= frac1);  // 200 ticks >= 100 ticks
+  std::cout << "  ✓ Fractional tick comparison: frac1 < frac2, frac2 > frac1, frac1 <= frac2, frac2 >= frac1"
+            << std::endl;
+
+  // Test boundary: same revolutions, different ticks
+  Position same_rev1(1, PositionUnit::REVOLUTIONS, &mock);
+  same_rev1.set_ticks(16384 + 50);  // 1 rev + 50 ticks
+  Position same_rev2(1, PositionUnit::REVOLUTIONS, &mock);
+  same_rev2.set_ticks(16384 + 100);  // 1 rev + 100 ticks
+
+  assert(same_rev1 < same_rev2);  // Same rev, but 50 < 100 ticks
+  assert(same_rev2 > same_rev1);
+  assert(same_rev1 <= same_rev2);
+  assert(same_rev2 >= same_rev1);
+  std::cout << "  ✓ Same revolution, different ticks: correct ordering" << std::endl;
+}
+
+void test_position_abs() {
+  std::cout << "Testing abs() method..." << std::endl;
+
+  float steps_per_rev = 3200.0f;
+  MockServoXxd mock(steps_per_rev);
+
+  // Test positive value
+  Position pos_positive(2.5, PositionUnit::REVOLUTIONS, &mock);
+  Position abs_positive = pos_positive.abs();
+  assert(abs_positive.revolutions() == 2);
+  assert(abs_positive.angle_ticks() == 8192);
+  std::cout << "  ✓ abs(2.5 rev) = 2 rev + 8192 ticks" << std::endl;
+
+  // Test negative value without fractional part
+  Position pos_neg_int(-3.0, PositionUnit::REVOLUTIONS, &mock);
+  Position abs_neg_int = pos_neg_int.abs();
+  assert(abs_neg_int.revolutions() == 3);
+  assert(abs_neg_int.angle_ticks() == 0);
+  std::cout << "  ✓ abs(-3 rev) = 3 rev + 0 ticks" << std::endl;
+
+  // Test negative value with fractional part
+  Position pos_neg_frac(-2.5, PositionUnit::REVOLUTIONS, &mock);
+  Position abs_neg_frac = pos_neg_frac.abs();
+  assert(abs_neg_frac.revolutions() == 2);
+  assert(abs_neg_frac.angle_ticks() == 8192);
+  std::cout << "  ✓ abs(-2.5 rev) = 2 rev + 8192 ticks" << std::endl;
+
+  // Test zero
+  Position pos_zero(0.0, PositionUnit::REVOLUTIONS, &mock);
+  Position abs_zero = pos_zero.abs();
+  assert(abs_zero.revolutions() == 0);
+  assert(abs_zero.angle_ticks() == 0);
+  std::cout << "  ✓ abs(0 rev) = 0 rev + 0 ticks" << std::endl;
+
+  // Test negative with small fractional part
+  Position pos_neg_small(-0.25, PositionUnit::REVOLUTIONS, &mock);
+  Position abs_neg_small = pos_neg_small.abs();
+  assert(abs_neg_small.revolutions() == 0);
+  assert(abs_neg_small.angle_ticks() == 4096);  // 0.25 * 16384
+  std::cout << "  ✓ abs(-0.25 rev) = 0 rev + 4096 ticks" << std::endl;
+
+  // Test that abs() doesn't modify original
+  Position pos_orig(-1.0, PositionUnit::REVOLUTIONS, &mock);
+  Position abs_result = pos_orig.abs();
+  assert(pos_orig.revolutions() == -1);   // Original unchanged
+  assert(abs_result.revolutions() == 1);  // Result is positive
+  std::cout << "  ✓ abs() doesn't modify original position" << std::endl;
+
+  // Test abs() with degrees (from_degrees now needs parent - use nullptr)
+  Position pos_neg_deg = Position::from_degrees(-45.0, nullptr);
+  Position abs_neg_deg = pos_neg_deg.abs();
+  double abs_degrees = abs_neg_deg.get_degrees();
+  assert(float_eq(abs_degrees, 45.0));
+  std::cout << "  ✓ abs(-45°) = 45°" << std::endl;
 }
 
 void test_position_zero() {
@@ -354,14 +485,14 @@ void test_angle_ticks_boundaries() {
   std::cout << "Testing angle_ticks boundaries..." << std::endl;
 
   // Test: from_ticks(-1) should normalize to -1 rev + 16383 ticks
-  Position pos_neg1 = Position::from_ticks(-1);
+  Position pos_neg1 = Position::from_ticks(-1, nullptr);
   assert(pos_neg1.revolutions() == -1);
   assert(pos_neg1.angle_ticks() == 16383);
   std::cout << "  ✓ from_ticks(-1) = " << pos_neg1.revolutions() << " rev + " << pos_neg1.angle_ticks() << " ticks"
             << std::endl;
 
   // Test: from_ticks(16384 + 16383) = 2 rev - 1 tick = 1 rev + 16383 ticks
-  Position pos_over = Position::from_ticks(16384 + 16383);
+  Position pos_over = Position::from_ticks(16384 + 16383, nullptr);
   assert(pos_over.revolutions() == 1);
   assert(pos_over.angle_ticks() == 16383);
   std::cout << "  ✓ from_ticks(32767) = " << pos_over.revolutions() << " rev + " << pos_over.angle_ticks() << " ticks"
@@ -369,7 +500,7 @@ void test_angle_ticks_boundaries() {
 
   // Test: Extreme value - INT32_MAX ticks
   int64_t extreme_ticks = static_cast<int64_t>(INT32_MAX);
-  Position pos_extreme = Position::from_ticks(extreme_ticks);
+  Position pos_extreme = Position::from_ticks(extreme_ticks, nullptr);
   int32_t expected_revs = INT32_MAX / 16384;
   uint16_t expected_ticks = INT32_MAX % 16384;
   assert(pos_extreme.revolutions() == expected_revs);
@@ -379,7 +510,7 @@ void test_angle_ticks_boundaries() {
 
   // Test: Extreme negative - INT32_MIN ticks
   int64_t extreme_neg_ticks = static_cast<int64_t>(INT32_MIN);
-  Position pos_extreme_neg = Position::from_ticks(extreme_neg_ticks);
+  Position pos_extreme_neg = Position::from_ticks(extreme_neg_ticks, nullptr);
   std::cout << "  ✓ from_ticks(INT32_MIN) = " << pos_extreme_neg.revolutions() << " rev + "
             << pos_extreme_neg.angle_ticks() << " ticks" << std::endl;
 }
@@ -522,33 +653,33 @@ void test_factory_method_roundtrips() {
   std::cout << "  ✓ from_steps(6400) → " << pos_steps.revolutions() << " rev (2 revolutions)" << std::endl;
 
   // Test: from_revolutions() → get_revolutions() round-trip
-  Position pos_revs = Position::from_revolutions(2.5);
+  Position pos_revs = Position::from_revolutions(2.5, nullptr);
   assert(float_eq(pos_revs.get_revolutions(), 2.5));
   std::cout << "  ✓ from_revolutions(2.5) → get_revolutions() = " << pos_revs.get_revolutions() << std::endl;
 
   // Test: from_degrees() → get_degrees() round-trip
-  Position pos_deg = Position::from_degrees(180.0);
+  Position pos_deg = Position::from_degrees(180.0, nullptr);
   assert(float_eq(pos_deg.get_degrees(), 180.0));
   std::cout << "  ✓ from_degrees(180) → get_degrees() = " << pos_deg.get_degrees() << std::endl;
 
   // Test: from_radians() → get_radians() round-trip
   constexpr double two_pi = TWO_PI;
-  Position pos_rad = Position::from_radians(two_pi / 2.0);
+  Position pos_rad = Position::from_radians(two_pi / 2.0, nullptr);
   assert(float_eq(pos_rad.get_radians(), two_pi / 2.0));
   std::cout << "  ✓ from_radians(π) → get_radians() = " << pos_rad.get_radians() << std::endl;
 
   // Test: from_arcminutes() → get_arcminutes() round-trip
-  Position pos_arcmin = Position::from_arcminutes(10800);  // 180°
+  Position pos_arcmin = Position::from_arcminutes(10800, nullptr);  // 180°
   assert(int64_eq(pos_arcmin.get_arcminutes(), 10800, 2));
   std::cout << "  ✓ from_arcminutes(10800) → get_arcminutes() = " << pos_arcmin.get_arcminutes() << std::endl;
 
   // Test: from_arcseconds() → get_arcseconds() round-trip
-  Position pos_arcsec = Position::from_arcseconds(648000);  // 180°
+  Position pos_arcsec = Position::from_arcseconds(648000, nullptr);  // 180°
   assert(int64_eq(pos_arcsec.get_arcseconds(), 648000, 100));
   std::cout << "  ✓ from_arcseconds(648000) → get_arcseconds() = " << pos_arcsec.get_arcseconds() << std::endl;
 
   // Test: from_ticks() → get_ticks() round-trip
-  Position pos_ticks = Position::from_ticks(32768);  // 2 revolutions
+  Position pos_ticks = Position::from_ticks(32768, nullptr);  // 2 revolutions
   assert(pos_ticks.get_ticks() == 32768);
   std::cout << "  ✓ from_ticks(32768) → get_ticks() = " << pos_ticks.get_ticks() << std::endl;
 }
@@ -828,6 +959,8 @@ int main() {
   test_position_carry_borrow();
   test_position_negative_values();
   test_position_arithmetic();
+  test_position_comparison_operators();
+  test_position_abs();
   test_position_zero();
   test_position_unit_conversions();
   test_position_null_parent();

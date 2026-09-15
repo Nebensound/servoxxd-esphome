@@ -40,10 +40,9 @@ stepper:
     address: 0x01
 
     # Basic stepper configuration
-    steps_per_revolution: 3200 # 200 steps/rev × 16 microsteps
+    microsteps: 16 # 1-256 subdivisions (200 base steps × 16 = 3200 effective)
     # Motor model (affects working current default and max limit)
     servo_type: SERVO42D # SERVO28D | SERVO35D | SERVO42D | SERVO57D
-    microsteps: 16 # 1-256 subdivisions
     max_speed: 1000 steps/s # Can use: steps/s, RPM, revolutions/s
     acceleration: inf # Can use: steps/s^2, revolutions/s^2
     deceleration: inf

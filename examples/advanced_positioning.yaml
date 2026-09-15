@@ -63,7 +63,7 @@ modbus:
 stepper:
   - platform: servo42d_rs485
     id: my_stepper
-    steps_per_revolution: 3200 # 200 steps × 16 microsteps
+    microsteps: 16 # 200 base steps × 16 = 3200 effective steps/rev
     # Select your motor model for proper current defaults/limits
     servo_type: SERVO42D # SERVO28D | SERVO35D | SERVO42D | SERVO57D
     max_speed: 3000 steps/s

@@ -16,7 +16,8 @@ static int tests_passed = 0;
       tests_passed++; \
     } else { \
       std::cerr << "  ✗ FAILED: " << msg << std::endl; \
-      std::cerr << "    Expected: " << (expected) << ", Got: " << (actual) << std::endl; \
+      std::cerr << "    Expected: " << static_cast<int>(expected) << ", Got: " << static_cast<int>(actual) \
+                << std::endl; \
       exit(1); \
     } \
   } while (0)
@@ -49,37 +50,37 @@ void test_read_current_speed() {
   // Test positive speed (CCW rotation)
   Command cmd1(Commandtype::READ_CURRENT_SPEED);
   cmd1.response = {0x00, 0x64};  // 100 RPM
-  Speed speed1 = CommandDecoder::read_current_speed(cmd1);
+  Speed speed1 = CommandDecoder::read_current_speed(cmd1, nullptr);
   ASSERT_EQUAL(speed1.rpm(), 100, "Decode 100 RPM (CCW)");
 
   // Test negative speed (CW rotation)
   Command cmd2(Commandtype::READ_CURRENT_SPEED);
   cmd2.response = {0xFF, 0x9C};  // -100 RPM (0xFF9C = -100 in int16_t)
-  Speed speed2 = CommandDecoder::read_current_speed(cmd2);
+  Speed speed2 = CommandDecoder::read_current_speed(cmd2, nullptr);
   ASSERT_EQUAL(speed2.rpm(), -100, "Decode -100 RPM (CW)");
 
   // Test zero speed
   Command cmd3(Commandtype::READ_CURRENT_SPEED);
   cmd3.response = {0x00, 0x00};
-  Speed speed3 = CommandDecoder::read_current_speed(cmd3);
+  Speed speed3 = CommandDecoder::read_current_speed(cmd3, nullptr);
   ASSERT_EQUAL(speed3.rpm(), 0, "Decode 0 RPM (stopped)");
 
   // Test high speed (1500 RPM)
   Command cmd4(Commandtype::READ_CURRENT_SPEED);
   cmd4.response = {0x05, 0xDC};  // 1500 RPM
-  Speed speed4 = CommandDecoder::read_current_speed(cmd4);
+  Speed speed4 = CommandDecoder::read_current_speed(cmd4, nullptr);
   ASSERT_EQUAL(speed4.rpm(), 1500, "Decode 1500 RPM (max for CLOSE mode)");
 
   // Test invalid data size
   Command cmd5(Commandtype::READ_CURRENT_SPEED);
   cmd5.response = {0x00};  // Only 1 byte
-  Speed speed5 = CommandDecoder::read_current_speed(cmd5);
+  Speed speed5 = CommandDecoder::read_current_speed(cmd5, nullptr);
   ASSERT_EQUAL(speed5.rpm(), 0, "Invalid data returns default Speed");
 
   // Test wrong command type
   Command cmd6(Commandtype::READ_PULSE_COUNT);  // Wrong type
   cmd6.response = {0x00, 0x64};
-  Speed speed6 = CommandDecoder::read_current_speed(cmd6);
+  Speed speed6 = CommandDecoder::read_current_speed(cmd6, nullptr);
   ASSERT_EQUAL(speed6.rpm(), 0, "Wrong command type returns default Speed");
 }
 
@@ -94,31 +95,31 @@ void test_read_pulse_count() {
   // Test positive position
   Command cmd1(Commandtype::READ_PULSE_COUNT);
   cmd1.response = {0x00, 0x00, 0x03, 0xE8};  // 1000 ticks
-  Position pos1 = CommandDecoder::read_pulse_count(cmd1);
+  Position pos1 = CommandDecoder::read_pulse_count(cmd1, nullptr);
   ASSERT_EQUAL(pos1.get_ticks(), 1000, "Decode 1000 ticks");
 
   // Test negative position
   Command cmd2(Commandtype::READ_PULSE_COUNT);
   cmd2.response = {0xFF, 0xFF, 0xFC, 0x18};  // -1000 ticks
-  Position pos2 = CommandDecoder::read_pulse_count(cmd2);
+  Position pos2 = CommandDecoder::read_pulse_count(cmd2, nullptr);
   ASSERT_EQUAL(pos2.get_ticks(), -1000, "Decode -1000 ticks");
 
   // Test zero position
   Command cmd3(Commandtype::READ_PULSE_COUNT);
   cmd3.response = {0x00, 0x00, 0x00, 0x00};
-  Position pos3 = CommandDecoder::read_pulse_count(cmd3);
+  Position pos3 = CommandDecoder::read_pulse_count(cmd3, nullptr);
   ASSERT_EQUAL(pos3.get_ticks(), 0, "Decode 0 ticks");
 
   // Test large position (100,000 ticks)
   Command cmd4(Commandtype::READ_PULSE_COUNT);
   cmd4.response = {0x00, 0x01, 0x86, 0xA0};  // 100000 ticks
-  Position pos4 = CommandDecoder::read_pulse_count(cmd4);
+  Position pos4 = CommandDecoder::read_pulse_count(cmd4, nullptr);
   ASSERT_EQUAL(pos4.get_ticks(), 100000, "Decode 100000 ticks");
 
   // Test invalid data size
   Command cmd5(Commandtype::READ_PULSE_COUNT);
   cmd5.response = {0x00, 0x00};  // Only 2 bytes
-  Position pos5 = CommandDecoder::read_pulse_count(cmd5);
+  Position pos5 = CommandDecoder::read_pulse_count(cmd5, nullptr);
   ASSERT_EQUAL(pos5.get_ticks(), 0, "Invalid data returns default Position");
 }
 
@@ -133,25 +134,25 @@ void test_read_encoder_addition() {
   // Test positive encoder value
   Command cmd1(Commandtype::READ_ENCODER_ADDITION);
   cmd1.response = {0x00, 0x00, 0x00, 0x00, 0x03, 0xE8};  // 1000
-  Position pos1 = CommandDecoder::read_encoder_addition(cmd1);
+  Position pos1 = CommandDecoder::read_encoder_addition(cmd1, nullptr);
   ASSERT_EQUAL(pos1.get_ticks(), 1000, "Decode +1000 encoder ticks");
 
   // Test negative encoder value (48-bit sign extension)
   Command cmd2(Commandtype::READ_ENCODER_ADDITION);
   cmd2.response = {0xFF, 0xFF, 0xFF, 0xFF, 0xFC, 0x18};  // -1000
-  Position pos2 = CommandDecoder::read_encoder_addition(cmd2);
+  Position pos2 = CommandDecoder::read_encoder_addition(cmd2, nullptr);
   ASSERT_EQUAL(pos2.get_ticks(), -1000, "Decode -1000 encoder ticks (48-bit)");
 
   // Test zero
   Command cmd3(Commandtype::READ_ENCODER_ADDITION);
   cmd3.response = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-  Position pos3 = CommandDecoder::read_encoder_addition(cmd3);
+  Position pos3 = CommandDecoder::read_encoder_addition(cmd3, nullptr);
   ASSERT_EQUAL(pos3.get_ticks(), 0, "Decode 0 encoder ticks");
 
   // Test invalid data size
   Command cmd4(Commandtype::READ_ENCODER_ADDITION);
   cmd4.response = {0x00, 0x00, 0x00, 0x00};  // Only 4 bytes
-  Position pos4 = CommandDecoder::read_encoder_addition(cmd4);
+  Position pos4 = CommandDecoder::read_encoder_addition(cmd4, nullptr);
   ASSERT_EQUAL(pos4.get_ticks(), 0, "Invalid data returns default Position");
 }
 
@@ -166,19 +167,19 @@ void test_read_angle_error() {
   // Test positive error
   Command cmd1(Commandtype::READ_ANGLE_ERROR);
   cmd1.response = {0x00, 0x00, 0x00, 0x64};  // +100 error
-  Position err1 = CommandDecoder::read_angle_error(cmd1);
+  Position err1 = CommandDecoder::read_angle_error(cmd1, nullptr);
   ASSERT_EQUAL(err1.get_ticks(), 100, "Decode +100 angle error");
 
   // Test negative error
   Command cmd2(Commandtype::READ_ANGLE_ERROR);
   cmd2.response = {0xFF, 0xFF, 0xFF, 0x9C};  // -100 error
-  Position err2 = CommandDecoder::read_angle_error(cmd2);
+  Position err2 = CommandDecoder::read_angle_error(cmd2, nullptr);
   ASSERT_EQUAL(err2.get_ticks(), -100, "Decode -100 angle error");
 
   // Test zero error
   Command cmd3(Commandtype::READ_ANGLE_ERROR);
   cmd3.response = {0x00, 0x00, 0x00, 0x00};
-  Position err3 = CommandDecoder::read_angle_error(cmd3);
+  Position err3 = CommandDecoder::read_angle_error(cmd3, nullptr);
   ASSERT_EQUAL(err3.get_ticks(), 0, "Decode 0 angle error");
 }
 
@@ -289,58 +290,42 @@ void test_read_zeroing_status() {
 }
 
 /**
- * Test read_detailed_motor_status decoder
+ * Test read_motor_status decoder
  * Hardware Doc: Section 8.1.10 - Read the motor status
  * Register: 0xF1, Function: 0x04, Response: 2 bytes [0x00][status]
  * status: 0=FAIL, 1=STOP, 2=SPEED_UP, 3=SPEED_DOWN, 4=FULL_SPEED, 5=HOMING, 6=CALIBRATING
  */
 void test_read_detailed_motor_status() {
-  std::cout << "\n=== read_detailed_motor_status Tests (Register 0xF1) ===" << std::endl;
+  std::cout << "\n=== read_motor_status Tests (Register 0xF1) ===" << std::endl;
 
-  // Test FAIL state
-  std::vector<uint8_t> data0 = {0x00, 0x00};  // read fail
-  auto dms0 = CommandDecoder::read_detailed_motor_status(data0);
-  ASSERT_TRUE(dms0.state == CommandDecoder::DetailedMotorStatus::FAIL, "Decode FAIL (0)");
+  struct Case {
+    std::vector<uint8_t> response;
+    CommandDecoder::MotorStatus expected;
+    const char *message;
+  };
+  const Case cases[] = {
+      {{0x00, 0x00}, CommandDecoder::MotorStatus::FAIL, "Decode FAIL (0)"},
+      {{0x00, 0x01}, CommandDecoder::MotorStatus::STOP, "Decode STOP (1)"},
+      {{0x00, 0x02}, CommandDecoder::MotorStatus::SPEED_UP, "Decode SPEED_UP (2)"},
+      {{0x00, 0x03}, CommandDecoder::MotorStatus::SPEED_DOWN, "Decode SPEED_DOWN (3)"},
+      {{0x00, 0x04}, CommandDecoder::MotorStatus::FULL_SPEED, "Decode FULL_SPEED (4)"},
+      {{0x00, 0x05}, CommandDecoder::MotorStatus::HOMING, "Decode HOMING (5)"},
+      {{0x00, 0x06}, CommandDecoder::MotorStatus::CALIBRATING, "Decode CALIBRATING (6)"},
+      {{0x00, 0xFF}, CommandDecoder::MotorStatus::FAIL, "Invalid status defaults to FAIL"},
+      {{0x00}, CommandDecoder::MotorStatus::FAIL, "Invalid data size returns FAIL"},
+  };
 
-  // Test STOP state
-  std::vector<uint8_t> data1 = {0x00, 0x01};  // motor stop
-  auto dms1 = CommandDecoder::read_detailed_motor_status(data1);
-  ASSERT_TRUE(dms1.state == CommandDecoder::DetailedMotorStatus::STOP, "Decode STOP (1)");
+  for (const auto &c : cases) {
+    Command cmd(Commandtype::READ_MOTOR_STATUS);
+    cmd.response = c.response;
+    ASSERT_TRUE(CommandDecoder::read_motor_status(cmd) == c.expected, c.message);
+  }
 
-  // Test SPEED_UP state
-  std::vector<uint8_t> data2 = {0x00, 0x02};  // motor speed up
-  auto dms2 = CommandDecoder::read_detailed_motor_status(data2);
-  ASSERT_TRUE(dms2.state == CommandDecoder::DetailedMotorStatus::SPEED_UP, "Decode SPEED_UP (2)");
-
-  // Test SPEED_DOWN state
-  std::vector<uint8_t> data3 = {0x00, 0x03};  // motor speed down
-  auto dms3 = CommandDecoder::read_detailed_motor_status(data3);
-  ASSERT_TRUE(dms3.state == CommandDecoder::DetailedMotorStatus::SPEED_DOWN, "Decode SPEED_DOWN (3)");
-
-  // Test FULL_SPEED state
-  std::vector<uint8_t> data4 = {0x00, 0x04};  // motor full speed
-  auto dms4 = CommandDecoder::read_detailed_motor_status(data4);
-  ASSERT_TRUE(dms4.state == CommandDecoder::DetailedMotorStatus::FULL_SPEED, "Decode FULL_SPEED (4)");
-
-  // Test HOMING state
-  std::vector<uint8_t> data5 = {0x00, 0x05};  // motor is homing
-  auto dms5 = CommandDecoder::read_detailed_motor_status(data5);
-  ASSERT_TRUE(dms5.state == CommandDecoder::DetailedMotorStatus::HOMING, "Decode HOMING (5)");
-
-  // Test CALIBRATING state
-  std::vector<uint8_t> data6 = {0x00, 0x06};  // motor is Cal...
-  auto dms6 = CommandDecoder::read_detailed_motor_status(data6);
-  ASSERT_TRUE(dms6.state == CommandDecoder::DetailedMotorStatus::CALIBRATING, "Decode CALIBRATING (6)");
-
-  // Test invalid status (should default to FAIL)
-  std::vector<uint8_t> data7 = {0x00, 0xFF};  // invalid
-  auto dms7 = CommandDecoder::read_detailed_motor_status(data7);
-  ASSERT_TRUE(dms7.state == CommandDecoder::DetailedMotorStatus::FAIL, "Invalid status defaults to FAIL");
-
-  // Test invalid data size
-  std::vector<uint8_t> data8 = {0x00};  // Only 1 byte
-  auto dms8 = CommandDecoder::read_detailed_motor_status(data8);
-  ASSERT_TRUE(dms8.state == CommandDecoder::DetailedMotorStatus::FAIL, "Invalid data returns default state");
+  // Wrong command type must not be decoded
+  Command wrong(Commandtype::READ_CURRENT_SPEED);
+  wrong.response = {0x00, 0x01};
+  ASSERT_TRUE(CommandDecoder::read_motor_status(wrong) == CommandDecoder::MotorStatus::FAIL,
+              "Wrong command type returns FAIL");
 }
 
 /**
@@ -358,37 +343,48 @@ void test_read_all_config() {
   // Unit tests don't need actual ServoXxd functionality, just a valid pointer
   ServoXxd *mock_parent = reinterpret_cast<ServoXxd *>(0x1000);  // Non-null mock pointer
 
-  // Test valid configuration data (38 bytes)
+  // Test valid configuration data (38 bytes = 19 registers * 2 bytes per register)
+  // Based on hardware manual Configuration parameters table (1147H)
   Command cmd1(Commandtype::READ_ALL_CONFIG);
   cmd1.response = {
-      // REG1: Mode [mode][reserved]
-      0x03, 0x00,  // SR_OPEN mode
-      // REG2: Hold current [hw_hold][reserved]
-      0x04, 0x00,  // 50% (hw_hold=4 → (4+1)*10 = 50%)
-      // REG3: Work current [hi][lo]
+      // REG1: Mode + Hold current (bytes 0-1)
+      0x03, 0x04,  // SR_OPEN mode (0x03), Hold current 50% (hw_hold=4)
+      // REG2: Work current [hi][lo] (bytes 2-3)
       0x07, 0xD0,  // 2000 mA
-      // REG4: Subdivision [subdivision][reserved]
-      0x10, 0x00,  // 16 microsteps
-      // REG5: En + Dir [en_pin_active][shaft_reversed]
-      0x00, 0x00,  // LOW, not reversed
-      // REG6: AutoSDD + Protect [auto_screen_off][protect_enable]
-      0x01, 0x00,  // enabled, no protection
-      // REG7: Mplyer + NULL [mplyer][reserved]
-      0x00, 0x00,  // mplyer=0
-      // REG8: Baud rate + Slave address [baud_rate][slave_address]
-      0x01, 0x01,  // baud=1, slave=1
-      // REG9: Group address + Respond/Active [group_address][respond_active]
-      0x00, 0x01,  // group=0, respond=enabled
-      // REG10: MODBUS + Key lock [modbus_enable][key_lock]
+      // REG3: Subdivision + En (bytes 4-5)
+      0x10, 0x00,  // 16 microsteps, EN_LOW
+      // REG4: Dir + AutoSDD (bytes 6-7)
+      0x00, 0x01,  // CW, auto screen off enabled
+      // REG5: Protect + Mplyer (bytes 8-9)
+      0x00, 0x00,  // no protection, mplyer=0
+      // REG6: NULL + Baud rate (bytes 10-11)
+      0x00, 0x01,  // reserved, baud=1
+      // REG7: Slave address + Group address (bytes 12-13)
+      0x01, 0x00,  // slave=1, group=0
+      // REG8: Respond/Active (bytes 14-15)
+      0x01, 0x01,  // respond enabled
+      // REG9: MODBUS + Key lock (bytes 16-17)
       0x01, 0x00,  // MODBUS enabled, keys unlocked
-      // REG11-13: Homing parameters [trigger][direction][speed_hi][speed_lo][null][endlimit]
-      0x00, 0x00, 0x00, 0x64, 0x00, 0x01,  // LOW trigger, CW, 100 RPM, endlimit enabled
-      // REG14-16: No-limit homing [reverse_angle(4)][mode(2)][current_ma(2)]
-      0x00, 0x00, 0x07, 0xD0, 0x00, 0x00, 0x03, 0xE8,  // 2000 ticks, disabled, 1000 mA
-      // REG17: Remap + NULL [null][limit_port_remap]
-      0x00, 0x00,  // no remap
-      // REG18-19: 0_Mode parameters [zero_mode][zero_task][zero_speed][zero_direction]
-      0x00, 0x00, 0x02, 0x00  // disabled, clean, medium speed, CW
+      // REG10: HmTrig + HmDir (bytes 18-19)
+      0x00, 0x00,  // LOW trigger, CW
+      // REG11: HmSpeed [hi][lo] (bytes 20-21)
+      0x00, 0x64,  // 100 RPM
+      // REG12: NULL + EndLimit (bytes 22-23)
+      0x00, 0x01,  // reserved, endlimit enabled
+      // REG13: retValue [hi][lo] (part 1) (bytes 24-25)
+      0x00, 0x00,
+      // REG14: retValue [hi][lo] (part 2) (bytes 26-27)
+      0x07, 0xD0,  // 2000 ticks total
+      // REG15: NULL + Hm-mode (bytes 28-29)
+      0x00, 0x00,  // reserved, homing mode disabled
+      // REG16: Hm_ma [hi][lo] (bytes 30-31)
+      0x03, 0xE8,  // 1000 mA
+      // REG17: NULL + remap (bytes 32-33)
+      0x00, 0x00,  // reserved, no remap
+      // REG18: 0_Mode + Reserve (bytes 34-35)
+      0x00, 0xFF,  // disabled, reserved
+      // REG19: 0_Speed + 0_Dir (bytes 36-37)
+      0x02, 0x00  // medium speed, CW
   };
 
   auto config1 = CommandDecoder::read_all_config(cmd1, mock_parent);
@@ -424,7 +420,7 @@ void test_read_all_config() {
   // Test maximum holding current
   Command cmd4(Commandtype::READ_ALL_CONFIG);
   cmd4.response = cmd1.response;  // Copy from cmd1
-  cmd4.response[2] = 0x08;        // hw_hold = 8 → PERCENT_90
+  cmd4.response[1] = 0x08;        // hw_hold = 8 → PERCENT_90 (byte 1 is hold current)
   auto config4 = CommandDecoder::read_all_config(cmd4, mock_parent);
   ASSERT_EQUAL(static_cast<uint8_t>(config4.holding_current_percent),
                static_cast<uint8_t>(HoldingCurrentPercent::PERCENT_90), "Decode maximum holding current (PERCENT_90)");
@@ -446,37 +442,37 @@ void test_edge_cases() {
   // Test maximum positive int16_t speed (clamped to hardware limit)
   Command cmd_max_speed(Commandtype::READ_CURRENT_SPEED);
   cmd_max_speed.response = {0x7F, 0xFF};  // 32767 RPM (max int16_t)
-  Speed speed_max = CommandDecoder::read_current_speed(cmd_max_speed);
+  Speed speed_max = CommandDecoder::read_current_speed(cmd_max_speed, nullptr);
   ASSERT_EQUAL(speed_max.rpm(), 3000, "Max positive speed clamped to 3000 RPM");
 
   // Test minimum negative int16_t speed (clamped to hardware limit)
   Command cmd_min_speed(Commandtype::READ_CURRENT_SPEED);
   cmd_min_speed.response = {0x80, 0x00};  // -32768 RPM (min int16_t)
-  Speed speed_min = CommandDecoder::read_current_speed(cmd_min_speed);
+  Speed speed_min = CommandDecoder::read_current_speed(cmd_min_speed, nullptr);
   ASSERT_EQUAL(speed_min.rpm(), -3000, "Min negative speed clamped to -3000 RPM");
 
   // Test maximum positive int32_t position
   Command cmd_max_pos(Commandtype::READ_PULSE_COUNT);
   cmd_max_pos.response = {0x7F, 0xFF, 0xFF, 0xFF};  // 2147483647 (max int32_t)
-  Position pos_max = CommandDecoder::read_pulse_count(cmd_max_pos);
+  Position pos_max = CommandDecoder::read_pulse_count(cmd_max_pos, nullptr);
   ASSERT_EQUAL(pos_max.get_ticks(), 2147483647, "Max positive position");
 
   // Test minimum negative int32_t position
   Command cmd_min_pos(Commandtype::READ_PULSE_COUNT);
   cmd_min_pos.response = {0x80, 0x00, 0x00, 0x00};  // -2147483648 (min int32_t)
-  Position pos_min = CommandDecoder::read_pulse_count(cmd_min_pos);
+  Position pos_min = CommandDecoder::read_pulse_count(cmd_min_pos, nullptr);
   ASSERT_EQUAL(pos_min.get_ticks(), -2147483648LL, "Min negative position");
 
   // Test empty response data
   Command cmd_empty(Commandtype::READ_CURRENT_SPEED);
   cmd_empty.response = {};  // Empty
-  Speed speed_empty = CommandDecoder::read_current_speed(cmd_empty);
+  Speed speed_empty = CommandDecoder::read_current_speed(cmd_empty, nullptr);
   ASSERT_EQUAL(speed_empty.rpm(), 0, "Empty response returns default");
 
   // Test oversized response data (should still work, using first bytes)
   Command cmd_oversized(Commandtype::READ_CURRENT_SPEED);
   cmd_oversized.response = {0x00, 0x64, 0xFF, 0xFF};  // Extra bytes ignored
-  Speed speed_oversized = CommandDecoder::read_current_speed(cmd_oversized);
+  Speed speed_oversized = CommandDecoder::read_current_speed(cmd_oversized, nullptr);
   ASSERT_EQUAL(speed_oversized.rpm(), 100, "Oversized response uses first bytes");
 }
 

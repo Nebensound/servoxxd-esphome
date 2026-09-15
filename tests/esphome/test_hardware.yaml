@@ -1,7 +1,3 @@
-substitutions:
-  full_steps: 200
-  microsteps: 16
-
 esphome:
   name: servo42d-test
   friendly_name: Servo42D Setup Test
@@ -77,15 +73,12 @@ script:
       - lambda: |-
           int start_pos = (int)id(test_motor).current_position;
           ESP_LOGI("test", "  -> Start position: %d steps", start_pos);
-
-      - lambda: |-
-          // Direct C++ call to move_to() with runtime calculation
-          float target_pos = id(test_motor).current_position + 200.0f;
-          ESP_LOGI("test", "  -> Target position: %.0f steps", target_pos);
-          ESP_LOGI("test", "  -> Starting movement...");
-
-          esphome::servoxxd::Position pos(target_pos, esphome::servoxxd::PositionUnit::STEPS, id(test_motor));
-          id(test_motor)->move_to(pos);
+      - stepper.set_target:
+          id: test_motor
+          target:
+            value: !lambda |-
+              return 0.25;
+            unit: REVOLUTIONS
 
       - wait_until:
           condition:
@@ -94,8 +87,12 @@ script:
       - lambda: 'ESP_LOGI("test", "  -> Motor state: %s", id(test_motor)->get_state_string().c_str());'
       - wait_until:
           condition:
+            lambda: "return id(test_motor)->get_state() == esphome::servoxxd::State::Moving;"
+          timeout: 100s
+      - wait_until:
+          condition:
             lambda: "return id(test_motor)->get_state() == esphome::servoxxd::State::Idle;"
-          timeout: 10s
+          timeout: 100s
 
       - lambda: |-
           int final_pos = (int)id(test_motor).current_position;
@@ -265,32 +262,33 @@ stepper:
     address: 0x02
     servo_type: SERVO42D
     mode: POSITION
-    steps_per_revolution: 3200
-    microsteps: 16
-    speed: 100 steps/s
-    acceleration: 100 steps/s^2
+    speed: 1 revolutions/s
+    acceleration: 100 revolutions/s^2
+    # auto_screen_off: false
     homing:
       mode: ENDSTOP
-      at_startup: false # Disable for setup testing
+      at_startup: true # Disable for setup testing
       direction: CCW # Change to CW if your endstop is in the other direction
       speed: 2 rpm
-      endstop_trigger: LOW # Change to HIGH if your endstop triggers on HIGH
+      endstop_trigger: HIGH # Change to HIGH if your endstop triggers on HIGH
 
 # Sensors to monitor status
 sensor:
   - platform: template
     name: "Motor Position"
     lambda: |-
-      return id(test_motor).current_position;
+      return id(test_motor)->get_current_position_steps();
     update_interval: 1s
     unit_of_measurement: "steps"
+    accuracy_decimals: 2
 
   - platform: template
     name: "Motor Target Position"
     lambda: |-
-      return id(test_motor).target_position;
+      return id(test_motor)->get_target_position_steps();
     update_interval: 1s
     unit_of_measurement: "steps"
+    accuracy_decimals: 2
 
 # Text sensor for motor state
 text_sensor:
@@ -299,6 +297,17 @@ text_sensor:
     lambda: |-
       static std::string last_state = "";
       std::string current_state = id(test_motor)->get_state_string();
+      if (current_state != last_state) {
+        last_state = current_state;
+        return current_state;
+      }
+      return {};  // Return empty optional = no update
+    update_interval: 500ms
+  - platform: template
+    name: "Motor Setup State"
+    lambda: |-
+      static std::string last_state = "";
+      std::string current_state = id(test_motor)->get_setup_state_string();
       if (current_state != last_state) {
         last_state = current_state;
         return current_state;

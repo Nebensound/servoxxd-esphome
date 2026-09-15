@@ -31,8 +31,6 @@ Result ModbusTransport::execute_command(const Command &cmd) {
       pending_command_.emplace(cmd);
       timeout_start_ms_ = millis();
 
-      ESP_LOGD(TAG, "Read command 0x%02X, register 0x%04X, expecting %d bytes payload",
-               static_cast<uint8_t>(cmd.command_type), register_address, expected_payload_length);
       break;
     }
 
@@ -58,8 +56,9 @@ Result ModbusTransport::execute_command(const Command &cmd) {
           ESP_LOGE(TAG, "0x06 requires exactly 1 register (2 bytes), got %u", (unsigned) padded.size());
           return {false, ErrorCode::PROTOCOL_ERROR};
         }
-        // ESPHome requires rc = 0 for 0x06
-        device_->send(0x06, register_address, 0, 2, padded.data());
+        // number_of_entities must be > 0: newer ESPHome refuses an empty PDU for rc = 0
+        // (value is otherwise ignored for 0x06 - the two payload bytes are the register value)
+        device_->send(0x06, register_address, 1, 2, padded.data());
       } else {
         // 0x10: MUST NOT use rc=0
         device_->send(0x10, register_address, register_count, padded.size(), padded.data());
@@ -69,7 +68,6 @@ Result ModbusTransport::execute_command(const Command &cmd) {
       pending_command_.emplace(cmd);
       timeout_start_ms_ = millis();
 
-      ESP_LOGD(TAG, "Write command 0x%02X, register 0x%04X", static_cast<uint8_t>(cmd.command_type), register_address);
       break;
     }
 
@@ -123,6 +121,13 @@ void ModbusTransport::handle_response(const std::vector<uint8_t> &data) {
   ;
   uint8_t function_code = pending_command_->function_code();
   std::vector<uint8_t> send_payload = pending_command_->payload;
+  // Recreate the padded payload we actually transmitted so validation
+  // works for 1-byte values that were expanded to 2 bytes during send().
+  std::vector<uint8_t> expected_payload;
+  if ((function_code == 0x06 || function_code == 0x10) && (send_payload.size() % 2 != 0)) {
+    expected_payload.push_back(0x00);  // high byte placeholder
+  }
+  expected_payload.insert(expected_payload.end(), send_payload.begin(), send_payload.end());
 
   if (data.size() < 1) {
     ESP_LOGW(TAG, "Response too short: %d bytes", data.size());
@@ -157,8 +162,6 @@ void ModbusTransport::handle_response(const std::vector<uint8_t> &data) {
     if (response_callback_) {
       response_callback_(cmd_with_response);
     }
-    ESP_LOGD(TAG, "Read response validated for command 0x%02X: %d bytes",
-             static_cast<uint8_t>(cmd_with_response.command_type), data.size());
   } else if (function_code == 0x06 || function_code == 0x10) {
     // Write Single Register (0x06) or Write Multiple Registers (0x10)
     // Payload format: [addr_hi][addr_lo][value/count_hi][value/count_lo]
@@ -202,8 +205,8 @@ void ModbusTransport::handle_response(const std::vector<uint8_t> &data) {
 
         // Validate value bytes only (data[2:3] should match send_payload)
         // Response format: [addr_hi][addr_lo][value_hi][value_lo]
-        if (send_payload.size() != 2) {
-          ESP_LOGW(TAG, "Invalid send_payload size for 0x06: %d bytes (expected 2)", send_payload.size());
+        if (expected_payload.size() != 2) {
+          ESP_LOGW(TAG, "Invalid payload size for 0x06: %d bytes (expected 2)", expected_payload.size());
           state_ = State::IDLE;
           if (error_callback_) {
             error_callback_(pending_command_.value(), ErrorCode::PROTOCOL_ERROR);
@@ -211,10 +214,10 @@ void ModbusTransport::handle_response(const std::vector<uint8_t> &data) {
           return;
         }
 
-        if (send_payload[0] != data[2] || send_payload[1] != data[3]) {
+        if (expected_payload[0] != data[2] || expected_payload[1] != data[3]) {
           ESP_LOGW(TAG, "Write response value mismatch for register 0x%04X", response_register);
-          ESP_LOGW(TAG, "  Sent value: [%02X %02X], Received value: [%02X %02X]", send_payload[0], send_payload[1],
-                   data[2], data[3]);
+          ESP_LOGW(TAG, "  Sent value: [%02X %02X], Received value: [%02X %02X]", expected_payload[0],
+                   expected_payload[1], data[2], data[3]);
           state_ = State::IDLE;
           if (error_callback_) {
             error_callback_(pending_command_.value(), ErrorCode::INVALID_RESPONSE);
@@ -226,7 +229,6 @@ void ModbusTransport::handle_response(const std::vector<uint8_t> &data) {
       case 0x10: {
         // Response contains register count
         uint16_t response_count = (static_cast<uint16_t>(data[2]) << 8) | data[3];
-        ESP_LOGV(TAG, "Function 0x10 validated: register 0x%04X, count %d", response_register, response_count);
         break;
       }
       default:
@@ -241,8 +243,6 @@ void ModbusTransport::handle_response(const std::vector<uint8_t> &data) {
     if (response_callback_) {
       response_callback_(cmd_with_response);
     }
-    ESP_LOGD(TAG, "Write response validated for command 0x%02X (function 0x%02X)",
-             static_cast<uint8_t>(cmd_with_response.command_type), function_code);
   } else {
     ESP_LOGW(TAG, "Unexpected function code 0x%02X in handle_response", function_code);
     state_ = State::IDLE;

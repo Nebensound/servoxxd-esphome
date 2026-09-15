@@ -1,0 +1,114 @@
+# ESP-IDF compilation test mirroring a real-world valve drive:
+# SERVO42D in POSITION mode, ENDSTOP homing at startup, templated set_target
+# actions with units and an automated action set (stop/run_continuous with
+# acceleration, lambda-based values).
+#
+# Run with: esphome compile tests/esphome/test_valve_endstop.yaml
+
+substitutions:
+  gear_ratio: "4.888"
+
+esphome:
+  name: servoxxd-valve-test
+  friendly_name: "ServoXxd Valve Test"
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+external_components:
+  - source:
+      type: local
+      path: ../../components
+    components: [servoxxd]
+
+logger:
+  level: DEBUG
+
+uart:
+  - id: rs485
+    tx_pin: GPIO13
+    rx_pin: GPIO16
+    baud_rate: 9600
+
+modbus:
+  uart_id: rs485
+  send_wait_time: 1000ms
+
+stepper:
+  - platform: servoxxd
+    id: valve_stepper
+    servo_type: SERVO42D
+    mode: POSITION
+    address: 0x02
+    speed: 29.3 revolutions/min
+    acceleration: 1 revolutions/s^2
+    homing:
+      mode: ENDSTOP
+      at_startup: true
+      direction: CW
+      speed: 29.3 revolutions/min
+      endstop_trigger: HIGH
+
+number:
+  - platform: template
+    id: valve_position
+    name: "Valve Position"
+    optimistic: true
+    min_value: 0
+    max_value: 1
+    step: 0.01
+    on_value:
+      - stepper.set_target:
+          id: valve_stepper
+          target:
+            value: !lambda "return -0.25f * ${gear_ratio} + x * 0.25f * ${gear_ratio};"
+            unit: REVOLUTIONS
+
+button:
+  - platform: template
+    name: "Home"
+    on_press:
+      - stepper.home: valve_stepper
+  - platform: template
+    name: "Target (lambda, steps)"
+    on_press:
+      - stepper.set_target:
+          id: valve_stepper
+          target: !lambda "return 100.0f;"
+  - platform: template
+    name: "Stop with deceleration"
+    on_press:
+      - stepper.stop:
+          id: valve_stepper
+          acceleration: 2 revolutions/s^2
+  - platform: template
+    name: "Report position (lambda)"
+    on_press:
+      - stepper.report_position:
+          id: valve_stepper
+          position: !lambda "return 0.0f;"
+  - platform: template
+    name: "Holding current (lambda)"
+    on_press:
+      - stepper.set_holding_current_percent:
+          id: valve_stepper
+          percent: !lambda "return 0.4f;"
+  - platform: template
+    name: "Release protection"
+    on_press:
+      - stepper.release_protection: valve_stepper
+
+text_sensor:
+  - platform: template
+    name: "Motor State"
+    lambda: |-
+      return std::string(id(valve_stepper)->get_state_string());
+    update_interval: 1s
+
+sensor:
+  - platform: template
+    name: "Position Revolutions"
+    lambda: "return id(valve_stepper)->get_current_position_revolutions();"
+    update_interval: 1s
