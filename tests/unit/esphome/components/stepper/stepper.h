@@ -26,6 +26,7 @@ class Stepper : virtual public Component {
   float acceleration_{1000.0f};
   float deceleration_{1000.0f};
   float max_speed_{1000.0f};
+  float current_speed_{0.0f};
 };
 
 }  // namespace stepper

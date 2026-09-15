@@ -1,6 +1,7 @@
 #include "servoxxd_position.h"
 #include "servoxxd.h"
 #include <cmath>
+#include <cinttypes>
 
 namespace esphome {
 namespace servoxxd {
@@ -244,7 +245,7 @@ int64_t Position::get_int64_unit(PositionUnit unit) const {
 
     case PositionUnit::STEPS: {
       if (!parent_) {
-        ESP_LOGE(TAG, "get_steps: parent_ is nullptr (this=%p, revs=%d, angle_ticks=%u)",
+        ESP_LOGE(TAG, "get_steps: parent_ is nullptr (this=%p, revs=%" PRId32 ", angle_ticks=%u)",
                  static_cast<const void *>(this), revs_, angle_ticks_);
         return 0;
       }

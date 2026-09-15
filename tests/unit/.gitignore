@@ -7,6 +7,8 @@ test_stepper_engine
 test_command_decoder
 test_command_factory
 test_command
+test_logging
+test_modbus
 test_microstepping
 
 # Debug/helper executables

@@ -24,8 +24,12 @@ from esphome.const import (
 servoxxd_ns = cg.esphome_ns.namespace("servoxxd")
 
 # Main component class (Modbus transport implementation)
+# Declare by namespace so older ESPHome reaches the minimum-version validator.
 ServoXxd = servoxxd_ns.class_(
-    "ServoXxd", stepper.Stepper, modbus.ModbusDevice, cg.Component
+    "ServoXxd",
+    stepper.Stepper,
+    modbus.modbus_ns.class_("ModbusClientDevice"),
+    cg.Component,
 )
 
 # Action classes - all 20 actions declared in servoxxd namespace
@@ -704,6 +708,7 @@ def validate_homing_config(config):
 
 # Main component configuration schema
 CONFIG_SCHEMA = cv.All(
+    cv.require_esphome_version(2026, 8, 2),
     cv.Schema(
         {
             cv.GenerateID(): cv.declare_id(ServoXxd),
@@ -883,7 +888,7 @@ async def to_code(config):
 
     # Register as component and modbus device
     await cg.register_component(var, config)
-    await modbus.register_modbus_device(var, config)
+    await modbus.register_modbus_client_device(var, config)
 
     # Set basic configuration
     cg.add(var.set_address(config[CONF_ADDRESS]))
@@ -1022,6 +1027,7 @@ CONF_DECELERATION = "deceleration"
             cv.Required(CONF_TARGET): cv.templatable(validate_position_with_unit),
         }
     ),
+    synchronous=True,
 )
 async def stepper_set_target_to_code(config, action_id, template_arg, args):
     """Set target position - position mode only."""
@@ -1053,6 +1059,7 @@ async def stepper_set_target_to_code(config, action_id, template_arg, args):
             cv.Required(CONF_POSITION): cv.templatable(validate_position_with_unit),
         }
     ),
+    synchronous=True,
 )
 async def stepper_report_position_to_code(config, action_id, template_arg, args):
     """Report current position - position mode only."""
@@ -1083,6 +1090,7 @@ async def stepper_report_position_to_code(config, action_id, template_arg, args)
             cv.Required(CONF_ID): cv.use_id(ServoXxd),
         }
     ),
+    synchronous=True,
 )
 async def stepper_home_to_code(config, action_id, template_arg, args):
     """Execute homing sequence - position mode only."""
@@ -1099,6 +1107,7 @@ async def stepper_home_to_code(config, action_id, template_arg, args):
             cv.Required(CONF_ID): cv.use_id(ServoXxd),
         }
     ),
+    synchronous=True,
 )
 async def stepper_set_zero_to_code(config, action_id, template_arg, args):
     """Store current position as zero for virtual homing - position mode only."""
@@ -1127,6 +1136,7 @@ async def stepper_set_zero_to_code(config, action_id, template_arg, args):
         ),
         cv.has_at_least_one_key(CONF_SPEED, CONF_ACCELERATION),
     ),
+    synchronous=True,
 )
 async def stepper_run_continuous_to_code(config, action_id, template_arg, args):
     """Run motor continuously - speed mode only."""
@@ -1178,6 +1188,7 @@ async def stepper_run_continuous_to_code(config, action_id, template_arg, args):
             }
         ),
     ),
+    synchronous=True,
 )
 async def stepper_stop_to_code(config, action_id, template_arg, args):
     """Stop motor with deceleration."""
@@ -1209,6 +1220,7 @@ async def stepper_stop_to_code(config, action_id, template_arg, args):
             cv.Required(CONF_ID): cv.use_id(ServoXxd),
         }
     ),
+    synchronous=True,
 )
 async def stepper_emergency_stop_to_code(config, action_id, template_arg, args):
     """Emergency stop - immediate halt with maximum deceleration."""
@@ -1230,6 +1242,7 @@ async def stepper_emergency_stop_to_code(config, action_id, template_arg, args):
             cv.Required(CONF_ID): cv.use_id(ServoXxd),
         }
     ),
+    synchronous=True,
 )
 async def stepper_enable_to_code(config, action_id, template_arg, args):
     """Enable motor power."""
@@ -1246,6 +1259,7 @@ async def stepper_enable_to_code(config, action_id, template_arg, args):
             cv.Required(CONF_ID): cv.use_id(ServoXxd),
         }
     ),
+    synchronous=True,
 )
 async def stepper_disable_to_code(config, action_id, template_arg, args):
     """Disable motor power."""
@@ -1262,6 +1276,7 @@ async def stepper_disable_to_code(config, action_id, template_arg, args):
             cv.Required(CONF_ID): cv.use_id(ServoXxd),
         }
     ),
+    synchronous=True,
 )
 async def stepper_calibrate_to_code(config, action_id, template_arg, args):
     """Start motor calibration sequence."""
@@ -1278,6 +1293,7 @@ async def stepper_calibrate_to_code(config, action_id, template_arg, args):
             cv.Required(CONF_ID): cv.use_id(ServoXxd),
         }
     ),
+    synchronous=True,
 )
 async def stepper_release_protection_to_code(config, action_id, template_arg, args):
     """Release motor protection state after error."""
@@ -1294,6 +1310,7 @@ async def stepper_release_protection_to_code(config, action_id, template_arg, ar
             cv.Required(CONF_ID): cv.use_id(ServoXxd),
         }
     ),
+    synchronous=True,
 )
 async def stepper_restart_to_code(config, action_id, template_arg, args):
     """Restart motor controller."""
@@ -1316,6 +1333,7 @@ async def stepper_restart_to_code(config, action_id, template_arg, args):
             cv.Required(CONF_CONTROL_MODE): cv.enum(CONTROL_MODES, upper=True),
         }
     ),
+    synchronous=True,
 )
 async def stepper_set_control_mode_to_code(config, action_id, template_arg, args):
     """Change control mode (SR_OPEN/SR_CLOSE/SR_VFOC) at runtime."""
@@ -1334,6 +1352,7 @@ async def stepper_set_control_mode_to_code(config, action_id, template_arg, args
             cv.Required(CONF_CURRENT): cv.templatable(validate_current),
         }
     ),
+    synchronous=True,
 )
 async def stepper_set_working_current_to_code(config, action_id, template_arg, args):
     """Change working current at runtime."""
@@ -1353,6 +1372,7 @@ async def stepper_set_working_current_to_code(config, action_id, template_arg, a
             cv.Required(CONF_PERCENT): cv.templatable(cv.percentage),
         }
     ),
+    synchronous=True,
 )
 async def stepper_set_holding_current_percent_to_code(
     config, action_id, template_arg, args
@@ -1375,6 +1395,7 @@ async def stepper_set_holding_current_percent_to_code(
             cv.Required(CONF_SUBDIVISION): cv.templatable(validate_microsteps),
         }
     ),
+    synchronous=True,
 )
 async def stepper_set_microstepping_to_code(config, action_id, template_arg, args):
     """Change microstepping at runtime."""
@@ -1394,6 +1415,7 @@ async def stepper_set_microstepping_to_code(config, action_id, template_arg, arg
             cv.Required(CONF_SPEED): cv.templatable(validate_speed_with_unit),
         }
     ),
+    synchronous=True,
 )
 async def stepper_set_speed_to_code(config, action_id, template_arg, args):
     """Set maximum speed at runtime."""
@@ -1426,6 +1448,7 @@ async def stepper_set_speed_to_code(config, action_id, template_arg, args):
             ),
         }
     ),
+    synchronous=True,
 )
 async def stepper_set_acceleration_to_code(config, action_id, template_arg, args):
     """Set acceleration at runtime."""
@@ -1460,6 +1483,7 @@ async def stepper_set_acceleration_to_code(config, action_id, template_arg, args
             cv.Required(CONF_ID): cv.use_id(ServoXxd),
         }
     ),
+    synchronous=True,
 )
 async def stepper_key_lock_to_code(config, action_id, template_arg, args):
     """Lock motor display buttons."""
@@ -1476,6 +1500,7 @@ async def stepper_key_lock_to_code(config, action_id, template_arg, args):
             cv.Required(CONF_ID): cv.use_id(ServoXxd),
         }
     ),
+    synchronous=True,
 )
 async def stepper_key_unlock_to_code(config, action_id, template_arg, args):
     """Unlock motor display buttons."""

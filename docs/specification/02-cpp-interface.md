@@ -91,7 +91,7 @@ The component uses a modular four-layer architecture that separates concerns and
 ```mermaid
 graph TB
     subgraph Layer1["Layer 1: Core Component (ServoXxd)"]
-        L1A["ESPHome Integration<br/>(Component, Stepper, ModbusDevice)"]
+        L1A["ESPHome Integration<br/>(Component, Stepper, ModbusClientDevice)"]
         L1B["Configuration Management"]
         L1C["YAML Action API"]
         L1D["Facade Pattern"]
@@ -129,7 +129,9 @@ graph TB
 ### Layer 1: Core Component (Transport-Agnostic)
 
 **Class:** ServoXxd  
-**Inherits:** [stepper::Stepper](https://esphome.io/components/stepper/), [modbus::ModbusDevice](https://esphome.io/components/modbus.html), esphome::Component
+**Inherits:** [stepper::Stepper](https://esphome.io/components/stepper/), [modbus::ModbusClientDevice](https://esphome.io/components/modbus.html), esphome::Component
+
+**ESPHome requirement:** 2026.8.2 or newer, using the client Modbus API.
 
 **Responsibilities:**
 

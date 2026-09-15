@@ -13,10 +13,13 @@ See [unit/README.md](unit/README.md).
 
 ## Python configuration regression tests
 
-Use Python 3.11 or newer from an environment with ESPHome installed:
+Use Python 3.12 or newer with ESPHome 2026.8.2 or newer installed. CI uses
+Python 3.13 and ESPHome 2026.8.2:
 
 ```bash
 python -m unittest discover -s tests -p 'test_*.py'
+python -m unittest discover -s tests/esphome -p 'test_*.py'
+python -m unittest discover -s tests/python -p 'test_*.py'
 ```
 
 `test_extract_ruff.py` uses only the standard library. It checks that the format
@@ -56,6 +59,8 @@ included; `secrets.yaml` is excluded and an empty matrix is an error.
 | `esphome/test_compile.yaml` | Arduino ESP32; position and separate speed-mode motors/actions |
 | `esphome/test_hardware.yaml` | Arduino ESP32; boot-time motor exercise with ENDSTOP homing |
 | `esphome/test_valve_endstop.yaml` | ESP-IDF; valve positioning, ENDSTOP homing, templated actions |
+| `esphome/test_microstepping.yaml` | ESP-IDF; 256 microsteps with literal and templated actions |
+| `esphome/test_build_warnings.yaml` | ESP-IDF; all 20 actions and ServoXXD build-warning checks |
 | `../examples/*.yaml` | All user examples, including Home Assistant controls and speed mode |
 
 The old host/setup-test YAML files are not part of this repository. Compilation
@@ -79,3 +84,21 @@ timeout 30s esphome logs tests/esphome/test_hardware.yaml
 
 Use separate compile/upload/log commands, not `esphome run`. Inspect the logs and
 actual motor response; a timed wait expiring does not mean an operation succeeded.
+
+## Build-warning regressions
+
+Use ESPHome **2026.8.2 or newer**. `test_build_warnings.yaml` covers both motor modes,
+ENDSTOP homing configuration, templated positions, and every ServoXXD action under
+ESP-IDF. Its scripts are compile coverage only: none are invoked at boot.
+
+Action registrations are synchronous in ESPHome's automation sense: they enqueue
+motor operations and return without deferring the next automation action. This
+does not mean a movement or homing operation has already finished.
+
+The unit suite also checks Modbus FC04/FC06/FC10 encoding, PDU response handling,
+queue rejection, and errors using a mock of the modern client API. Logging checks
+compile all component sources with format checking enabled at every log level;
+they also verify fractional positions and holding-current percentages in output.
+
+Warnings from other external components, GPIO strapping-pin checks, and remote
+build bundle/secrets checks are outside ServoXXD's scope and are not suppressed.

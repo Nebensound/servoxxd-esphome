@@ -90,6 +90,35 @@ class ExampleTest(unittest.TestCase):
             compile_step["run"].strip(),
             'python tests/local_config.py compile "${{ matrix.yaml-file }}"',
         )
+        warning_fixture = "tests/esphome/test_build_warnings.yaml"
+        self.assertIn(warning_fixture, emitted["yaml-file"])
+        self.assertEqual(compile_step["if"], f"matrix.yaml-file != '{warning_fixture}'")
+        warning_step = next(
+            step
+            for step in compile_job["steps"]
+            if step.get("name") == "Check ServoXXD build warnings"
+        )
+        self.assertEqual(warning_step["if"], f"matrix.yaml-file == '{warning_fixture}'")
+        self.assertEqual(warning_step["shell"], "bash")
+        self.assertIn(
+            'python tests/local_config.py compile "${{ matrix.yaml-file }}" 2>&1 | tee',
+            warning_step["run"],
+        )
+
+    def test_ci_runs_all_python_suites_with_supported_esphome(self):
+        workflow = yaml_util.load_yaml(ROOT / ".github/workflows/ci.yml")
+        steps = workflow["jobs"]["configuration-tests"]["steps"]
+        python_step = next(
+            step for step in steps if step.get("uses") == "actions/setup-python@v5"
+        )
+        self.assertEqual(python_step["with"]["python-version"], "3.13")
+        commands = [step["run"] for step in steps if "run" in step]
+        self.assertIn("pip install esphome==2026.8.2", commands)
+        for directory in ("tests", "tests/esphome", "tests/python"):
+            self.assertIn(
+                f"python -m unittest discover -s {directory} -p 'test_*.py'",
+                commands,
+            )
 
     def test_new_configurations_are_discovered_without_matrix_edits(self):
         with tempfile.TemporaryDirectory() as directory:

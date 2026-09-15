@@ -5,6 +5,7 @@
 #include "servoxxd_commands.h"
 #include "servoxxd_modbus.h"  // Layer 4 implementation (only in .cpp)
 #include <cmath>
+#include <cinttypes>
 
 namespace esphome {
 namespace servoxxd {
@@ -136,7 +137,7 @@ void ServoXxd::report_position(const Position &pos) {
   // TODO: Offset-Feature wird später implementiert
   // Für jetzt: Setze einfach die aktuelle Position direkt
   set_current_pos(pos);
-  ESP_LOGW(TAG, "report_position: Feature not yet implemented - just setting current_position to %.0f steps",
+  ESP_LOGW(TAG, "report_position: Feature not yet implemented - just setting current_position to %" PRId64 " steps",
            pos.get_steps());
 }
 
@@ -349,7 +350,7 @@ void ServoXxd::loop() {
       uint32_t now = millis();
 
       if (now - this->setup_start_time_ > SETUP_TIMEOUT_MS) {
-        ESP_LOGE(TAG, "Motor setup timeout after %ums", SETUP_TIMEOUT_MS);
+        ESP_LOGE(TAG, "Motor setup timeout after %" PRIu32 "ms", SETUP_TIMEOUT_MS);
         this->setup_state_ = SetupState::FAILED;
         this->mark_failed();
       }
@@ -381,7 +382,8 @@ void ServoXxd::dump_config() {
   // Current settings (only effective in SR_OPEN and SR_CLOSE modes)
   if (this->config_.mode != ControlMode::SR_VFOC) {
     ESP_LOGCONFIG(TAG, "  Working Current: %u mA", this->config_.working_current_ma);
-    ESP_LOGCONFIG(TAG, "  Holding Current: %u%% of working", this->config_.holding_current_percent);
+    ESP_LOGCONFIG(TAG, "  Holding Current: %s of working",
+                  holding_current_percent_to_string(this->config_.holding_current_percent));
   }
 
   // Motor behavior
@@ -440,11 +442,12 @@ void ServoXxd::dump_config() {
   }
 
   // Current state
-  ESP_LOGCONFIG(TAG, "  Current Position: %d steps (%.2f rev)", this->current_position,
-                this->current_pos_.revolutions());
-  ESP_LOGCONFIG(TAG, "  Target Position: %d steps (%.2f rev)", this->target_position, this->target_pos_.revolutions());
-  ESP_LOGCONFIG(TAG, "  Position Offset: %.0f steps (%.2f rev)", this->position_offset_.get_steps(),
-                this->position_offset_.revolutions());
+  ESP_LOGCONFIG(TAG, "  Current Position: %" PRId32 " steps (%.2f rev)", this->current_position,
+                this->current_pos_.get_revolutions());
+  ESP_LOGCONFIG(TAG, "  Target Position: %" PRId32 " steps (%.2f rev)", this->target_position,
+                this->target_pos_.get_revolutions());
+  ESP_LOGCONFIG(TAG, "  Position Offset: %" PRId64 " steps (%.2f rev)", this->position_offset_.get_steps(),
+                this->position_offset_.get_revolutions());
   ESP_LOGCONFIG(TAG, "  Current Speed: %.1f steps/s (%.1f RPM)", this->current_speed_,
                 this->current_speed_ * 60.0f / get_effective_steps_per_revolution());
 
@@ -461,24 +464,21 @@ void ServoXxd::dump_config() {
 // Modbus Callbacks
 // ============================================================================
 
-void ServoXxd::on_modbus_data(const std::vector<uint8_t> &data) {
+void ServoXxd::on_response(std::span<const uint8_t> request_pdu, std::span<const uint8_t> response_pdu) {
   // Forward response data to transport layer
   if (this->transport_ != nullptr) {
-    this->transport_->handle_response(data);
+    this->transport_->handle_modbus_response(request_pdu, response_pdu);
   } else {
-    ESP_LOGW(TAG, "on_modbus_data() called but transport is null - received %zu bytes", data.size());
+    ESP_LOGW(TAG, "on_response() called but transport is null - received %zu bytes", response_pdu.size());
   }
 }
 
-void ServoXxd::on_modbus_error(uint8_t function_code, uint8_t exception_code) {
+void ServoXxd::on_error(std::span<const uint8_t> request_pdu, modbus::ExceptionCode exception_code) {
   // Forward error to ModbusTransport to clear "busy" state immediately
   // This prevents 4-second timeout wait after motor rejects a command
-  // Note: Detailed logging happens in handle_error_response() with command context
-  if (this->engine_) {
-    auto *modbus_transport = static_cast<ModbusTransport *>(this->engine_->get_transport());
-    if (modbus_transport) {
-      modbus_transport->handle_error_response(function_code, exception_code);
-    }
+  // Detailed logging happens in the transport with command context.
+  if (this->transport_ != nullptr) {
+    this->transport_->handle_modbus_error(request_pdu, exception_code);
   }
 }
 

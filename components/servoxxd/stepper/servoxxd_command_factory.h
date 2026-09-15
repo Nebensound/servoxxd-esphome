@@ -569,7 +569,7 @@ inline Command read_zero_return_status() { return Command(Commandtype::READ_ZERO
  * @param protect_enable Protection enable flag
  * @param mplyer 256x subdivision interpolation enable
  * @param baud_rate Baud rate code (from transport layer)
- * @param slave_address Slave address (from transport layer/ModbusDevice)
+ * @param slave_address Slave address (from transport layer/ModbusClientDevice)
  * @param group_address Group address (0x00-0xFF)
  * @param respond_enable Response enable flag
  * @param active_enable Active reporting enable flag

@@ -188,7 +188,7 @@ struct ProtectionStatus { bool protected_state; };
 ```cpp
 class ModbusTransport : public ITransport {
  public:
-  ModbusTransport(modbus::ModbusDevice* device);
+  ModbusTransport(modbus::ModbusClientDevice* device);
   
   Result execute_command(Command cmd, const std::vector<uint8_t>& data) override;
   Result read_command(Command cmd, std::vector<uint8_t>& response) override;
@@ -196,7 +196,7 @@ class ModbusTransport : public ITransport {
   void update() override;
   
  private:
-  modbus::ModbusDevice* device_;
+  modbus::ModbusClientDevice* device_;
   State state_;  // IDLE, WAITING_RESPONSE
   Command pending_command_;
   uint32_t timeout_start_ms_;
@@ -211,7 +211,11 @@ class ModbusTransport : public ITransport {
 - Write: Function 0x06 (Single) or 0x10 (Multiple)
 - CRC16 calculated per Modbus standard
 
-**Integration:** Wraps ESPHome's `modbus::ModbusDevice`, implements callbacks
+**Integration:** Wraps ESPHome's `modbus::ModbusClientDevice` (ESPHome 2026.8.2 or newer).
+Uses typed read/write request helpers and checks their queue-acceptance result.
+The Layer 1 bridge forwards `on_response(request_pdu, response_pdu)` and
+`on_error(request_pdu, exception_code)` to the transport. PDU spans are only valid
+during the callback; the transport copies response payloads that outlive it.
 
 ---
 

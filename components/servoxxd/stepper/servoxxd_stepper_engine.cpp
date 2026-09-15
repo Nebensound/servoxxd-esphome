@@ -5,6 +5,7 @@
 #include "servoxxd_command_factory.h"
 #include "servoxxd_transport.h"
 #include <cmath>
+#include <cinttypes>
 #include <cstring>
 
 namespace esphome {
@@ -1074,7 +1075,7 @@ void StepperEngine::check_state_timeouts() {
     case State::SettingUp:
       // Maximum setup duration: 30 seconds
       if (state_duration > 30000) {
-        ESP_LOGE(TAG_ENGINE, "Setup timeout after %u ms", state_duration);
+        ESP_LOGE(TAG_ENGINE, "Setup timeout after %" PRIu32 " ms", state_duration);
         handle_error("Setup timeout - motor not responding");
       }
       break;
@@ -1082,7 +1083,7 @@ void StepperEngine::check_state_timeouts() {
     case State::Homing:
       // Maximum homing duration: 600 seconds
       if (state_duration > 600000) {
-        ESP_LOGE(TAG_ENGINE, "Homing timeout after %u ms", state_duration);
+        ESP_LOGE(TAG_ENGINE, "Homing timeout after %" PRIu32 " ms", state_duration);
         handle_error("Homing timeout");
       }
       break;
@@ -1090,7 +1091,7 @@ void StepperEngine::check_state_timeouts() {
     case State::Calibrating:
       // Maximum calibration duration: 120 seconds
       if (state_duration > 120000) {
-        ESP_LOGE(TAG_ENGINE, "Calibration timeout after %u ms", state_duration);
+        ESP_LOGE(TAG_ENGINE, "Calibration timeout after %" PRIu32 " ms", state_duration);
         handle_error("Calibration timeout");
       }
       break;
@@ -1098,7 +1099,7 @@ void StepperEngine::check_state_timeouts() {
     case State::Stopping:
       // Maximum stop duration: 50 seconds
       if (state_duration > 50000) {
-        ESP_LOGE(TAG_ENGINE, "Stopping timeout after %u ms", state_duration);
+        ESP_LOGE(TAG_ENGINE, "Stopping timeout after %" PRIu32 " ms", state_duration);
         // Force transition to Idle even if not at standstill
         transition_to(State::Idle);
       }
@@ -1245,7 +1246,8 @@ void StepperEngine::process_protection_update(uint8_t protected_status) {
   if (protection_triggered_ && !old_protection) {
     ESP_LOGE(TAG_ENGINE, "Protection triggered! Status=0x%02X", protected_status);
     ESP_LOGE(TAG_ENGINE, "  Current state: %s", state_to_string(state_));
-    ESP_LOGE(TAG_ENGINE, "  Current position: %.2f steps (%.2f rev), Target position: %.2f steps (%.2f rev)",
+    ESP_LOGE(TAG_ENGINE,
+             "  Current position: %" PRId64 " steps (%.2f rev), Target position: %" PRId64 " steps (%.2f rev)",
              parent_->current_pos_.get_steps(), parent_->current_pos_.get_revolutions(),
              parent_->target_pos_.get_steps(), parent_->target_pos_.get_revolutions());
     ESP_LOGE(TAG_ENGINE, "  Current speed: %.2f RPM", current_speed_.rpm());
