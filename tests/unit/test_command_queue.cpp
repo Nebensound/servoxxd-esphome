@@ -329,15 +329,16 @@ void test_deduplication() {
     queue.on_response(cmd);
   }
 
-  // Only the LAST callback is invoked (deduplication replaces callback, doesn't accumulate)
-  assert(callback1_count == 0);             // Not called (replaced by callback2)
-  assert(callback2_count == 0);             // Not called (replaced by callback3)
-  assert(callback3_count == 1);             // Only the last one is called
-  assert(received_data3 == response_data);  // Only the last callback received data
+  assert(callback1_count == 1);
+  assert(callback2_count == 1);
+  assert(callback3_count == 1);
+  assert(received_data1 == response_data);
+  assert(received_data2 == response_data);
+  assert(received_data3 == response_data);
   assert(queue.is_empty());
 
   std::cout << "  ✓ Duplicate read commands merged" << std::endl;
-  std::cout << "  ✓ Only last callback invoked (callback replaced, not accumulated)" << std::endl;
+  std::cout << "  ✓ All callbacks invoked exactly once" << std::endl;
 }
 
 // ============================================================================
@@ -385,6 +386,7 @@ void test_no_deduplication_writes() {
 // ============================================================================
 void test_priority_queue() {
   std::cout << "\nTEST 8: Priority queue handling..." << std::endl;
+  test_millis = 0;
 
   MockTransport transport;
   CommandQueue queue(&transport);
@@ -419,35 +421,22 @@ void test_priority_queue() {
   queue.on_response(Command(Commandtype::READ_ENCODER_CARRY));
   assert(callback_order[0] == 1);
 
-  std::cout << "  Debug: After command 1, callback_order.size()=" << callback_order.size() << std::endl;
+  assert(transport.get_last_executed_commandtype() == Commandtype::RELEASE_PROTECTION);
+  queue.on_response(Command(Commandtype::RELEASE_PROTECTION));
+  assert(callback_order[1] == 99);
 
-  // NOTE: Priority queue was expected to jump CRITICAL to front, but implementation
-  // currently maintains FIFO order. This is a known issue - prepare_next_command()
-  // is only called ONCE when the first command starts executing, so the priority
-  // sorting doesn't affect already-enqueued commands. The priority system works
-  // for commands enqueued AFTER a slot becomes available, not for reordering
-  // existing pending commands.
-
-  // So the actual execution order is: 1 (EXECUTING) -> 2 (next FIFO) -> 3 -> 99
-
-  // READ_CURRENT_SPEED executes next (FIFO order preserved)
+  // Normal commands retain FIFO order after CRITICAL.
   queue.update();
   queue.on_response(Command(Commandtype::READ_CURRENT_SPEED));
-  assert(callback_order[1] == 2);
+  assert(callback_order[2] == 2);
 
   // Then READ_MOTOR_STATUS
   queue.update();
   queue.on_response(Command(Commandtype::READ_MOTOR_STATUS));
-  assert(callback_order[2] == 3);
+  assert(callback_order[3] == 3);
 
-  // Finally RELEASE_PROTECTION (CRITICAL, but added last)
-  queue.update();
-  queue.on_response(Command(Commandtype::RELEASE_PROTECTION));
-  assert(callback_order[3] == 99);
-
-  std::cout << "  ✓ FIFO order preserved (priority not dynamically reordered)" << std::endl;
+  std::cout << "  ✓ CRITICAL precedes pending NORMAL commands at millis 0" << std::endl;
   std::cout << "  ✓ Executing command not interrupted" << std::endl;
-  std::cout << "  NOTE: Priority queue reordering only applies to NEW commands" << std::endl;
 }
 
 // ============================================================================
@@ -592,12 +581,13 @@ void test_multiple_callbacks() {
     queue.on_response(cmd);
   }
 
-  // Only the LAST callback is invoked (deduplication replaces callback, doesn't accumulate)
-  assert(callback_count == 1);  // Only the last of the 3 callbacks is invoked
-  assert(received_data.size() == 1);
-  assert(received_data[0] == response);
+  assert(callback_count == 3);
+  assert(received_data.size() == 3);
+  for (const auto &data : received_data) {
+    assert(data == response);
+  }
 
-  std::cout << "  ✓ Only last callback invoked (callback replaced, not accumulated)" << std::endl;
+  std::cout << "  ✓ All callbacks invoked exactly once" << std::endl;
   std::cout << "  ✓ Deduplicated command receives correct data" << std::endl;
 }
 
@@ -705,6 +695,442 @@ void test_mixed_read_write() {
   std::cout << "  ✓ Mixed commands execute in order" << std::endl;
 }
 
+void test_coalesced_completion_outcomes() {
+  enum class Outcome { SUCCESS, ERROR, TIMEOUT, CLEAR };
+  for (auto priority : {Priority::NORMAL, Priority::BACKGROUND, Priority::IDLE}) {
+    for (auto outcome : {Outcome::SUCCESS, Outcome::ERROR, Outcome::TIMEOUT, Outcome::CLEAR}) {
+      for (int requesters : {0, 1, 3}) {
+        test_millis = 0;
+        MockTransport transport;
+        CommandQueue queue(&transport, 50);
+        int counts[3] = {};
+        bool expect_success = outcome == Outcome::SUCCESS;
+        Command response(Commandtype::READ_ENCODER_CARRY);
+        response.response = {0x12, 0x34};
+        std::optional<bool> dedup = priority == Priority::NORMAL ? std::optional<bool>(true) : std::nullopt;
+
+        queue.enqueue(Command(Commandtype::READ_MOTOR_STATUS), nullptr);
+        queue.enqueue(response, nullptr, priority, 0, dedup);
+        for (int i = 0; i < requesters; ++i) {
+          queue.enqueue(
+              response,
+              [&, i](bool success, const Command &cmd) {
+                ++counts[i];
+                assert(success == expect_success);
+                assert(cmd.command_type == response.command_type);
+                assert(cmd.response == (expect_success ? response.response : std::vector<uint8_t>{}));
+              },
+              priority, 0, dedup);
+          queue.enqueue(response, nullptr, priority, 0, dedup);
+        }
+        queue.enqueue(response, nullptr, priority, 0, dedup);
+        assert(queue.size() == 2);
+        queue.update();
+        assert(transport.execute_count_ == 1);
+
+        if (outcome == Outcome::CLEAR) {
+          queue.clear();
+          assert(queue.size() == 1);
+          transport.simulate_response(Command(Commandtype::READ_MOTOR_STATUS));
+        } else {
+          transport.simulate_response(Command(Commandtype::READ_MOTOR_STATUS));
+          assert(transport.execute_count_ == 2);
+          queue.update();
+          assert(transport.execute_count_ == 2);
+          if (outcome == Outcome::SUCCESS) {
+            transport.simulate_response(response);
+          } else if (outcome == Outcome::ERROR) {
+            transport.simulate_error(response, ErrorCode::TIMEOUT);
+          } else {
+            test_millis = 50;
+            queue.update();
+            assert(counts[0] == 0);
+            test_millis = 51;
+            queue.update();
+          }
+        }
+        assert(queue.is_empty());
+        transport.simulate_response(response);
+        transport.simulate_error(response, ErrorCode::TIMEOUT);
+        queue.clear();
+        queue.update();
+        for (int i = 0; i < 3; ++i) {
+          assert(counts[i] == (i < requesters ? 1 : 0));
+        }
+        assert(transport.execute_count_ == (outcome == Outcome::CLEAR ? 1 : 2));
+      }
+    }
+  }
+}
+
+void test_pending_only_deduplication() {
+  test_millis = 0;
+  MockTransport transport;
+  CommandQueue queue(&transport);
+  int callbacks = 0;
+  Command read(Commandtype::READ_ENCODER_CARRY);
+  auto callback = [&](bool success, const Command &) {
+    assert(success);
+    ++callbacks;
+  };
+  queue.enqueue(read, callback, Priority::BACKGROUND);
+  queue.enqueue(read, callback, Priority::BACKGROUND);
+  queue.enqueue(read, callback, Priority::BACKGROUND);
+  assert(queue.size() == 2);
+  assert(transport.execute_count_ == 1);
+  transport.simulate_response(read);
+  assert(callbacks == 1);
+  assert(transport.execute_count_ == 2);
+  transport.simulate_response(read);
+  assert(callbacks == 3);
+  assert(queue.is_empty());
+
+  queue.enqueue(Command(Commandtype::READ_MOTOR_STATUS), nullptr);
+  queue.enqueue(Command(Commandtype::SET_ZERO, {1}), nullptr, Priority::BACKGROUND);
+  queue.enqueue(Command(Commandtype::SET_ZERO, {2}), nullptr, Priority::BACKGROUND);
+  queue.enqueue(read, nullptr, Priority::BACKGROUND, 0, false);
+  queue.enqueue(read, nullptr, Priority::BACKGROUND, 0, false);
+  assert(queue.size() == 5);
+  queue.clear();
+  transport.simulate_response(Command(Commandtype::READ_MOTOR_STATUS));
+  assert(queue.is_empty());
+}
+
+void test_delayed_coalesced_completion() {
+  for (uint32_t start : {0U, UINT32_MAX - 49, UINT32_MAX - 99}) {
+    for (bool error : {false, true}) {
+      for (bool following : {false, true}) {
+        test_millis = start;
+        MockTransport transport;
+        CommandQueue queue(&transport);
+        int callbacks = 0;
+        Command read(Commandtype::READ_ENCODER_CARRY);
+        read.response = {7, 8};
+        queue.enqueue(Command(Commandtype::READ_MOTOR_STATUS), nullptr);
+        for (int i = 0; i < 3; ++i) {
+          queue.enqueue(
+              read,
+              [&](bool success, const Command &cmd) {
+                ++callbacks;
+                assert(success == !error);
+                assert(cmd.response == (error ? std::vector<uint8_t>{} : read.response));
+                queue.update();
+                assert(transport.execute_count_ == 2);
+              },
+              Priority::BACKGROUND, 100);
+        }
+        transport.simulate_response(Command(Commandtype::READ_MOTOR_STATUS));
+        if (following) {
+          queue.enqueue(Command(Commandtype::READ_CURRENT_SPEED), nullptr);
+        }
+        if (error) {
+          transport.simulate_error(read, ErrorCode::TIMEOUT);
+        } else {
+          transport.simulate_response(read);
+        }
+        if (!following) {
+          queue.clear();
+        }
+        assert(callbacks == (error ? 3 : 0));
+        assert(transport.execute_count_ == 2);
+        test_millis = start + 99;
+        queue.update();
+        assert(callbacks == (error ? 3 : 0));
+        assert(transport.execute_count_ == 2);
+        test_millis = start + 100;
+        queue.update();
+        assert(callbacks == 3);
+        assert(transport.execute_count_ == (following ? 3 : 2));
+        if (following) {
+          transport.simulate_response(Command(Commandtype::READ_CURRENT_SPEED));
+        }
+        queue.update();
+        assert(callbacks == 3);
+        assert(queue.is_empty());
+      }
+    }
+  }
+}
+
+void test_reentrant_completion() {
+  for (int outcome = 0; outcome < 4; ++outcome) {
+    test_millis = 0;
+    MockTransport transport;
+    CommandQueue queue(&transport, 50);
+    int first = 0, second = 0, cancelled = 0, fresh = 0;
+    Command read(Commandtype::READ_ENCODER_CARRY);
+    queue.enqueue(Command(Commandtype::READ_MOTOR_STATUS), nullptr);
+    auto delay = outcome == 3 ? 10U : 0U;
+    queue.enqueue(
+        read,
+        [&](bool success, const Command &) {
+          ++first;
+          assert(success == (outcome == 0 || outcome == 3));
+          queue.clear();
+          queue.enqueue(Command(Commandtype::READ_CURRENT_SPEED), [&](bool ok, const Command &) {
+            assert(ok);
+            ++fresh;
+          });
+          queue.update();
+          // Reentrant late events must not re-notify the completed command.
+          queue.on_response(read);
+          queue.on_error(read, ErrorCode::TIMEOUT);
+          assert(transport.execute_count_ == 2);
+          assert(second == 0);
+        },
+        Priority::NORMAL, delay, true);
+    queue.enqueue(
+        read,
+        [&](bool success, const Command &) {
+          ++second;
+          assert(success == (outcome == 0 || outcome == 3));
+          assert(first == 1);
+          assert(transport.execute_count_ == 2);
+        },
+        Priority::NORMAL, delay, true);
+    queue.enqueue(Command(Commandtype::SET_ZERO), [&](bool success, const Command &) {
+      assert(!success);
+      ++cancelled;
+    });
+    transport.simulate_response(Command(Commandtype::READ_MOTOR_STATUS));
+    if (outcome == 1) {
+      transport.simulate_error(read, ErrorCode::TIMEOUT);
+    } else if (outcome == 2) {
+      test_millis = 51;
+      queue.update();
+    } else {
+      transport.simulate_response(read);
+      if (outcome == 3) {
+        assert(first == 0 && second == 0);
+        test_millis = 10;
+        queue.update();
+      }
+    }
+    assert(first == 1 && second == 1 && cancelled == 1);
+    assert(transport.execute_count_ == 3);
+    transport.simulate_response(Command(Commandtype::READ_CURRENT_SPEED));
+    assert(fresh == 1);
+    assert(queue.is_empty());
+  }
+}
+
+void test_reentrant_clear_and_delayed_last_callback() {
+  for (bool complete_before_clear : {false, true}) {
+    test_millis = 0;
+    MockTransport transport;
+    CommandQueue queue(&transport);
+    int completed = 0, cancelled = 0, fresh = 0;
+    queue.enqueue(
+        Command(Commandtype::READ_MOTOR_STATUS),
+        [&](bool success, const Command &) {
+          assert(success);
+          ++completed;
+        },
+        Priority::NORMAL, 10);
+    for (int i = 0; i < 3; ++i) {
+      queue.enqueue(
+          Command(Commandtype::READ_ENCODER_CARRY),
+          [&](bool success, const Command &) {
+            assert(!success);
+            ++cancelled;
+            queue.clear();
+            queue.update();
+            assert(transport.execute_count_ == 1);
+          },
+          Priority::BACKGROUND);
+    }
+    queue.enqueue(Command(Commandtype::SET_ZERO), [&](bool success, const Command &) {
+      assert(!success);
+      ++cancelled;
+      queue.enqueue(Command(Commandtype::READ_CURRENT_SPEED), [&](bool ok, const Command &) {
+        assert(ok);
+        ++fresh;
+      });
+      queue.update();
+      assert(transport.execute_count_ == 1);
+    });
+    if (complete_before_clear) {
+      transport.simulate_response(Command(Commandtype::READ_MOTOR_STATUS));
+    }
+    queue.clear();
+    assert(cancelled == 4 && completed == 0);
+    if (!complete_before_clear) {
+      assert(queue.size() == 2);
+      transport.simulate_response(Command(Commandtype::READ_MOTOR_STATUS));
+    }
+    assert(queue.size() == 1);
+    test_millis = 10;
+    queue.update();
+    assert(completed == 1);
+    assert(transport.execute_count_ == 2);
+    transport.simulate_response(Command(Commandtype::READ_CURRENT_SPEED));
+    assert(fresh == 1);
+    queue.update();
+    assert(completed == 1 && cancelled == 4);
+  }
+}
+
+void test_deduplication_retains_priority_age_and_latest_delay() {
+  test_millis = 0;
+  MockTransport transport;
+  CommandQueue queue(&transport, 100000);
+  std::vector<int> order;
+  queue.enqueue(Command(Commandtype::READ_MOTOR_STATUS), nullptr);
+  auto enqueue = [&](int id, Priority priority, uint32_t delay, bool dedup) {
+    queue.enqueue(
+        Command(Commandtype::SET_ZERO),
+        [&, id](bool success, const Command &) {
+          assert(success);
+          order.push_back(id);
+        },
+        priority, delay, dedup);
+  };
+  enqueue(1, Priority::IDLE, 30, true);
+  test_millis = 10000;
+  enqueue(2, Priority::BACKGROUND, 20, true);
+  enqueue(3, Priority::NORMAL, 0, false);
+  transport.simulate_response(Command(Commandtype::READ_MOTOR_STATUS));
+  transport.simulate_response(Command(Commandtype::SET_ZERO));
+  assert(order.empty());
+  test_millis += 20;
+  queue.update();
+  assert((order == std::vector<int>{1, 2}));
+  transport.simulate_response(Command(Commandtype::SET_ZERO));
+  assert((order == std::vector<int>{1, 2, 3}));
+  assert(queue.is_empty());
+
+  queue.enqueue(Command(Commandtype::READ_MOTOR_STATUS), nullptr);
+  enqueue(4, Priority::NORMAL, 0, false);
+  queue.enqueue(Command(Commandtype::READ_ENCODER_CARRY), nullptr, Priority::IDLE);
+  queue.enqueue(Command(Commandtype::READ_ENCODER_CARRY), nullptr, Priority::SETUP, 0, true);
+  queue.enqueue(Command(Commandtype::READ_ENCODER_CARRY), nullptr, Priority::IDLE);
+  transport.simulate_response(Command(Commandtype::READ_MOTOR_STATUS));
+  assert(transport.get_last_executed_commandtype() == Commandtype::READ_ENCODER_CARRY);
+  transport.simulate_response(Command(Commandtype::READ_ENCODER_CARRY));
+  transport.simulate_response(Command(Commandtype::SET_ZERO));
+  assert((order == std::vector<int>{1, 2, 3, 4}));
+}
+
+void test_strict_priorities_and_fifo() {
+  for (uint32_t start : {0U, 1U, UINT32_MAX - 5}) {
+    test_millis = start;
+    MockTransport transport;
+    CommandQueue queue(&transport);
+    std::vector<int> order;
+    queue.enqueue(Command(Commandtype::READ_MOTOR_STATUS), nullptr);
+    auto enqueue = [&](int id, Priority priority) {
+      queue.enqueue(
+          Command(Commandtype::SET_ZERO),
+          [&, id](bool success, const Command &) {
+            assert(success);
+            order.push_back(id);
+          },
+          priority, 0, false);
+    };
+    enqueue(1, Priority::NORMAL);
+    enqueue(2, Priority::NORMAL);
+    enqueue(3, Priority::SETUP);
+    enqueue(4, Priority::SETUP);
+    enqueue(5, Priority::CRITICAL);
+    enqueue(6, Priority::CRITICAL);
+    enqueue(7, Priority::BACKGROUND);
+    enqueue(8, Priority::IDLE);
+    assert(transport.execute_count_ == 1);
+    transport.simulate_response(Command(Commandtype::READ_MOTOR_STATUS));
+    for (int i = 0; i < 8; ++i) {
+      assert(transport.execute_count_ == i + 2);
+      queue.update();
+      assert(transport.execute_count_ == i + 2);
+      transport.simulate_response(Command(Commandtype::SET_ZERO));
+    }
+    assert((order == std::vector<int>{5, 6, 3, 4, 1, 2, 7, 8}));
+    assert(queue.is_empty());
+  }
+}
+
+void test_priority_aging_and_rollover() {
+  for (uint32_t start : {0U, UINT32_MAX - 5000}) {
+    for (auto low : {Priority::BACKGROUND, Priority::IDLE}) {
+      uint32_t penalty = low == Priority::BACKGROUND ? 10000 : 60000;
+      for (uint32_t age : {penalty - 1, penalty, penalty + 1}) {
+        test_millis = start;
+        MockTransport transport;
+        CommandQueue queue(&transport, 100000);
+        std::vector<int> order;
+        queue.enqueue(Command(Commandtype::READ_MOTOR_STATUS), nullptr);
+        auto enqueue = [&](int id, Priority priority) {
+          queue.enqueue(
+              Command(Commandtype::SET_ZERO),
+              [&, id](bool success, const Command &) {
+                assert(success);
+                order.push_back(id);
+              },
+              priority, 0, false);
+        };
+        enqueue(1, low);
+        test_millis = start + age;
+        enqueue(2, Priority::NORMAL);
+        enqueue(3, Priority::NORMAL);
+        enqueue(4, Priority::SETUP);
+        enqueue(5, Priority::CRITICAL);
+        transport.simulate_response(Command(Commandtype::READ_MOTOR_STATUS));
+        for (int i = 0; i < 5; ++i) {
+          transport.simulate_response(Command(Commandtype::SET_ZERO));
+        }
+        // At the exact aging boundary, insertion order wins the effective-time tie.
+        auto expected = age < penalty ? std::vector<int>{5, 4, 2, 3, 1} : std::vector<int>{5, 4, 1, 2, 3};
+        assert(order == expected);
+        assert(queue.is_empty());
+      }
+    }
+  }
+}
+
+void test_normal_fifo_across_rollover() {
+  test_millis = UINT32_MAX - 1;
+  MockTransport transport;
+  CommandQueue queue(&transport);
+  std::vector<int> order;
+  queue.enqueue(Command(Commandtype::READ_MOTOR_STATUS), nullptr);
+  queue.enqueue(Command(Commandtype::SET_ZERO), [&](bool, const Command &) { order.push_back(1); });
+  test_millis = 1;
+  queue.enqueue(Command(Commandtype::SET_ZERO), [&](bool, const Command &) { order.push_back(2); });
+  transport.simulate_response(Command(Commandtype::READ_MOTOR_STATUS));
+  transport.simulate_response(Command(Commandtype::SET_ZERO));
+  transport.simulate_response(Command(Commandtype::SET_ZERO));
+  assert((order == std::vector<int>{1, 2}));
+}
+
+void test_synchronous_transport_completion() {
+  class SynchronousTransport : public MockTransport {
+   public:
+    Result execute_command(const Command &cmd) override {
+      assert(!busy_);
+      auto result = MockTransport::execute_command(cmd);
+      auto payload = cmd.payload;
+      simulate_response(cmd);
+      assert(cmd.payload == payload);
+      return result;
+    }
+  } transport;
+  test_millis = 0;
+  CommandQueue queue(&transport);
+  int callbacks = 0;
+  queue.enqueue(Command(Commandtype::SET_ZERO, {1, 2}), [&](bool success, const Command &) {
+    assert(success);
+    ++callbacks;
+    queue.enqueue(Command(Commandtype::SET_ZERO, {3, 4}), [&](bool ok, const Command &) {
+      assert(ok);
+      ++callbacks;
+    });
+    queue.update();
+    assert(transport.execute_count_ == 1);
+  });
+  assert(callbacks == 2);
+  assert(transport.execute_count_ == 2);
+  assert(queue.is_empty());
+}
+
 // ============================================================================
 // Main
 // ============================================================================
@@ -729,9 +1155,19 @@ int main() {
     test_update_empty_queue();
     test_late_response_ignored();
     test_mixed_read_write();
+    test_coalesced_completion_outcomes();
+    test_pending_only_deduplication();
+    test_delayed_coalesced_completion();
+    test_reentrant_completion();
+    test_reentrant_clear_and_delayed_last_callback();
+    test_deduplication_retains_priority_age_and_latest_delay();
+    test_strict_priorities_and_fifo();
+    test_priority_aging_and_rollover();
+    test_normal_fifo_across_rollover();
+    test_synchronous_transport_completion();
 
     std::cout << "\n========================================" << std::endl;
-    std::cout << "✅ All CommandQueue Tests Passed (14/14)!" << std::endl;
+    std::cout << "✅ All CommandQueue Tests Passed (24/24)!" << std::endl;
     std::cout << "========================================" << std::endl;
 
     return 0;
