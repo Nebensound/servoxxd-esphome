@@ -34,7 +34,7 @@ ENGINE_SOURCES = \
 	$(MOCK_DIR)/hal.cpp
 
 # Test executables (all active tests)
-TESTS = test_speed test_acceleration test_position test_command_queue test_stepper_engine test_command_decoder test_command_factory test_command
+TESTS = test_speed test_acceleration test_position test_command_queue test_stepper_engine test_command_decoder test_command_factory test_command test_public_header
 
 # Colors for output
 GREEN = \033[0;32m
@@ -77,6 +77,10 @@ test_command_factory: test_command_factory.cpp $(COMPONENT_DIR)/servoxxd_speed.c
 test_command: test_command.cpp
 	@echo "Building $@..."
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
+
+test_public_header: test_public_header.cpp $(wildcard $(COMPONENT_DIR)/*.h)
+	@echo "Building $@..."
+	$(CXX) $(CXXFLAGS) -o $@ $< $(LDFLAGS)
 
 test_command_codec_extended: test_command_codec_extended.cpp
 	@echo "Building $@..."

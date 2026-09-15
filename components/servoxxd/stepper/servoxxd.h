@@ -28,7 +28,6 @@ class StepperEngine;
 // ModbusDevice and bridges ESPHome's Modbus callbacks to the transport layer.
 class ModbusTransport;
 enum class Commandtype : uint16_t;
-struct Command;
 
 // State enum (defined in servoxxd_stepper_engine.h)
 enum class State;
@@ -852,7 +851,7 @@ class ServoXxd : virtual public Component, public stepper::Stepper, public modbu
   /**
    * @brief Handle Modbus response
    *
-   * Forwards response to ITransport implementation for command completion.
+   * Forwards response to ModbusTransport::handle_response() for command completion.
    */
   void on_modbus_data(const std::vector<uint8_t> &data) override;
 
