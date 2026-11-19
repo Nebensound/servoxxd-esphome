@@ -1,23 +1,21 @@
-# Multi-Motor Servo42D RS485 Example
+# Multi-Motor ServoXXD RS485 Example
 #
 # This example shows how to control multiple motors on the same RS485 bus
 # Each motor must have a unique MODBUS address configured via the display
 
 esphome:
-  name: servo42d-multi
-  friendly_name: "Servo42D Multi-Motor Example"
+  name: servoxxd-multi
+  friendly_name: "ServoXXD Multi-Motor Example"
 
 esp32:
   board: esp32dev
   framework:
     type: arduino
 
-# Load component (adjust path if needed)
+# Load the development branch; select an existing branch/tag for your deployment.
 external_components:
-  - source:
-      type: local
-      path: ../components
-    components: [servo42d_rs485]
+  - source: github://Nebensound/servoxxd-esphome@develop
+    components: [servoxxd]
 
 # Enable logging
 logger:
@@ -41,57 +39,73 @@ modbus:
 # Multiple Servo42D motors with different addresses
 stepper:
   # Motor 1 - X-Axis
-  - platform: servo42d_rs485
+  - platform: servoxxd
     id: motor_x
+    control_mode: SR_CLOSE
+    microsteps: 16 # 200 base steps × 16 = 3200 effective steps/rev
+    servo_type: SERVO42D # Set per motor if different models are used
     max_speed: 2000 steps/s
     acceleration: 800 steps/s^2
-    deceleration: 800 steps/s^2
     modbus_id: modbus_bus
     address: 0x01
-    update_interval: 1s
+    # Each motor needs its own physical endstop wired to its controller.
+    homing:
+      mode: ENDSTOP
+      direction: CW
+      speed: 10 RPM
+      endstop_trigger: HIGH
+      at_startup: false
 
   # Motor 2 - Y-Axis
-  - platform: servo42d_rs485
+  - platform: servoxxd
     id: motor_y
+    control_mode: SR_CLOSE
+    microsteps: 16 # 200 base steps × 16 = 3200 effective steps/rev
+    servo_type: SERVO42D # SERVO28D | SERVO35D | SERVO42D | SERVO57D
     max_speed: 2000 steps/s
     acceleration: 800 steps/s^2
-    deceleration: 800 steps/s^2
     modbus_id: modbus_bus
     address: 0x02
-    update_interval: 1s
+    homing:
+      mode: ENDSTOP
+      direction: CW
+      speed: 10 RPM
+      endstop_trigger: HIGH
+      at_startup: false
 
   # Motor 3 - Z-Axis
-  - platform: servo42d_rs485
+  - platform: servoxxd
     id: motor_z
+    control_mode: SR_CLOSE
+    microsteps: 16 # 200 base steps × 16 = 3200 effective steps/rev
+    servo_type: SERVO42D
     max_speed: 1000 steps/s
     acceleration: 500 steps/s^2
-    deceleration: 500 steps/s^2
     modbus_id: modbus_bus
     address: 0x03
-    update_interval: 1s
+    homing:
+      mode: ENDSTOP
+      direction: CW
+      speed: 10 RPM
+      endstop_trigger: HIGH
+      at_startup: false
 
 # Example: Control buttons for each motor
 button:
   - platform: template
     name: "Home X-Axis"
     on_press:
-      - servo42d_rs485.home: motor_x
+      - stepper.home: motor_x
 
   - platform: template
     name: "Home Y-Axis"
     on_press:
-      - servo42d_rs485.home: motor_y
+      - stepper.home: motor_y
 
   - platform: template
     name: "Home Z-Axis"
     on_press:
-      - servo42d_rs485.home: motor_z
+      - stepper.home: motor_z
 
-  - platform: template
-    name: "Home All Axes"
-    on_press:
-      - servo42d_rs485.home: motor_x
-      - delay: 5s # Wait for X to finish
-      - servo42d_rs485.home: motor_y
-      - delay: 5s # Wait for Y to finish
-      - servo42d_rs485.home: motor_z
+# Home axes individually and confirm completion in the logs before the next.
+# A fixed delay does not guarantee completion or successful homing.

@@ -1,0 +1,32 @@
+# Compiled test executables (active tests)
+test_speed
+test_acceleration
+test_position
+test_command_queue
+test_stepper_engine
+test_command_decoder
+test_command_factory
+test_command
+test_logging
+test_modbus
+test_microstepping
+
+# Debug/helper executables
+test_debug
+test_epsilon
+test_acc_debug
+test_pos_debug
+test_position_debug
+test_debug_position
+test_stepper_engine_v2
+
+# Object files
+*.o
+*.obj
+
+# Backup files
+*.bak
+*.cpp.bak
+
+# Debug symbols
+*.dSYM/

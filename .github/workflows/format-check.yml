@@ -1,0 +1,47 @@
+name: Auto-Format Code
+
+on:
+  push:
+    branches-ignore:
+      - main
+
+jobs:
+  format:
+    name: Format Code (C++, Python, YAML)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install formatters
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-format
+          pip install ruff
+          npm install -g prettier
+
+      - name: Format C++ Code
+        run: |
+          cd tests/unit
+          make format
+
+      - name: Format Python Code
+        run: |
+          ruff format components/servoxxd/
+
+      - name: Format YAML Files
+        run: |
+          prettier --write "**/*.{yaml,yml}"
+
+      - name: Commit Changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "🎨 Auto-format code (C++, Python, YAML)"

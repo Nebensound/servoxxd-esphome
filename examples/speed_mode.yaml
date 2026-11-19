@@ -1,0 +1,52 @@
+# Continuous rotation uses SPEED mode.
+# Negative static speeds are currently rejected by validation; see README.md.
+esphome:
+  name: servoxxd-speed
+  friendly_name: "ServoXXD Speed Example"
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+external_components:
+  - source: github://Nebensound/servoxxd-esphome@develop
+    components: [servoxxd]
+
+logger:
+
+uart:
+  id: uart_bus
+  tx_pin: GPIO17
+  rx_pin: GPIO16
+  baud_rate: 38400
+  parity: EVEN
+  stop_bits: 1
+
+modbus:
+  id: modbus_bus
+  uart_id: uart_bus
+
+stepper:
+  - platform: servoxxd
+    id: my_stepper
+    modbus_id: modbus_bus
+    address: 0x01
+    servo_type: SERVO42D
+    control_mode: SR_VFOC
+    microsteps: 1
+    mode: SPEED
+    speed: 10 RPM
+    acceleration: 100 RPM/s
+
+button:
+  - platform: template
+    name: "Run CW"
+    on_press:
+      - stepper.run_continuous:
+          id: my_stepper
+          speed: 10 RPM
+  - platform: template
+    name: "Stop"
+    on_press:
+      - stepper.stop: my_stepper
