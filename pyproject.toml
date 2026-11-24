@@ -1,0 +1,4 @@
+# Automatically synced from: https://github.com/esphome/esphome/blob/dev/pyproject.toml
+# DO NOT EDIT - Changes will be overwritten by update-format-configs workflow
+
+[tool.ruff]

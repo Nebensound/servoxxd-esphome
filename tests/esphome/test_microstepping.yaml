@@ -1,0 +1,48 @@
+esphome:
+  name: servoxxd-microstepping-test
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+external_components:
+  - source:
+      type: local
+      path: ../../components
+    components: [servoxxd]
+
+uart:
+  id: uart_bus
+  tx_pin: GPIO17
+  rx_pin: GPIO16
+  baud_rate: 38400
+  parity: EVEN
+
+modbus:
+  id: modbus_bus
+  uart_id: uart_bus
+
+stepper:
+  - platform: servoxxd
+    id: test_stepper
+    modbus_id: modbus_bus
+    servo_type: SERVO42D
+    control_mode: SR_CLOSE
+    microsteps: 256
+    speed: 51200 steps/s
+    acceleration: 1000 RPM/s
+
+button:
+  - platform: template
+    name: Static microstepping
+    on_press:
+      - stepper.set_microstepping:
+          id: test_stepper
+          subdivision: 256
+  - platform: template
+    name: Templated microstepping
+    on_press:
+      - stepper.set_microstepping:
+          id: test_stepper
+          subdivision: !lambda return 256;

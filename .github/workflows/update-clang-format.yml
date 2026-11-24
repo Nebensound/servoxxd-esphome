@@ -1,0 +1,68 @@
+name: Sync Format Configs from ESPHome
+
+on:
+  schedule:
+    # Prüft täglich (2 Uhr nachts)
+    - cron: "0 2 * * *"
+  workflow_dispatch: # Manuell auslösbar
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Test Ruff extraction
+        run: python -m unittest discover -s tests -p test_extract_ruff.py
+
+      - name: Download ESPHome .clang-format
+        run: |
+          curl --fail --show-error --silent --location https://raw.githubusercontent.com/esphome/esphome/dev/.clang-format -o .clang-format.new
+          if ! test -s .clang-format.new || ! head -n 1 .clang-format.new | grep -qx -- '---'; then
+            echo "::error::Empty or invalid upstream .clang-format download"
+            exit 1
+          fi
+          clang-format --style=file:.clang-format.new --dump-config > /dev/null
+
+          # Header hinzufügen
+          cat > .clang-format.tmp << 'EOF'
+          ---
+          # Automatically synced from: https://github.com/esphome/esphome/blob/dev/.clang-format
+          # DO NOT EDIT - Changes will be overwritten by update-format-configs workflow
+
+          EOF
+
+          # Originale Datei (ohne YAML delimiter) anhängen
+          tail -n +2 .clang-format.new >> .clang-format.tmp
+          mv .clang-format.tmp .clang-format
+          rm .clang-format.new
+
+      - name: Download ESPHome pyproject.toml (ruff config)
+        run: |
+          curl --fail --show-error --silent --location https://raw.githubusercontent.com/esphome/esphome/dev/pyproject.toml -o pyproject.toml.new
+          python .github/scripts/extract_ruff.py pyproject.toml.new pyproject.toml
+          rm pyproject.toml.new
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: "⬆️ Update format configs from ESPHome upstream"
+          branch: update-format-configs
+          delete-branch: true
+          title: "Update format configs from ESPHome"
+          body: |
+            Automatischer Sync der Format-Konfigurationen von ESPHome upstream:
+            - `.clang-format` (C++)
+            - `pyproject.toml` (Python/ruff)
+
+            Quellen:
+            - https://github.com/esphome/esphome/blob/dev/.clang-format
+            - https://github.com/esphome/esphome/blob/dev/pyproject.toml
+          labels: dependencies
