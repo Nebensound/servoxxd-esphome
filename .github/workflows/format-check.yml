@@ -9,6 +9,8 @@ jobs:
   format:
     name: Format Code (C++, Python, YAML)
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout Repository
